@@ -1,0 +1,28 @@
+# Cache and generated files
+*_cache/
+*_files/
+*.html
+.claude/
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# R
+.Rhistory
+.RData
+.Rproj.user/
+
+# OS
+.DS_Store
+
+# Temp files
+/tmp/
+
+# LaTeX
+*.log
+*.aux
+*.out
+*.bbl
+*.blg
