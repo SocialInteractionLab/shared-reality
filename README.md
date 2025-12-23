@@ -15,21 +15,19 @@ Code and data for reproducing the analyses in the paper.
 ### Behavioral analyses (Figures 2, 3, 5)
 
 ```bash
-cd analysis
-quarto render paper_analyses.qmd
+quarto render analysis/behavioral_analyses.qmd
 ```
 
 ### Computational model (Figure 4)
 
 ```bash
-python scripts/run_model_comparison.py
-python scripts/generate_figures.py
+quarto render analysis/model_analyses.qmd
 ```
 
 ## Structure
 
-- `analysis/` - Quarto document reproducing all behavioral statistics
+- `analysis/` - Quarto notebooks reproducing all analyses
+  - `behavioral_analyses.qmd` - Mixed-effects models and Figures 2, 3, 5
+  - `model_analyses.qmd` - Bayesian factor model and Figure 4
 - `data/` - Experimental data
-- `models/` - Computational models
-- `scripts/` - Analysis scripts
-- `outputs/` - Generated figures and model outputs
+- `models/` - Computational model code

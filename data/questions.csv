@@ -1,0 +1,36 @@
+num,text,domain
+1,Do you exercise regularly?,arbitrary
+2,Do you enjoy being outdoors?,arbitrary
+3,Do you work from home?,arbitrary
+4,Do you go out on weekdays?,arbitrary
+5,Do you eat breakfast?,arbitrary
+6,Have you stayed in the same place for your entire life?,background
+7,Did you or your family immigrate to a new country?,background
+8,Do you enjoy spending time with your family?,background
+9,Do you live in a city?,background
+10,Do you live in a warm climate?,background
+11,Are you a parent or caregiver?,identity
+12,Do you identify as the gender which you were assigned at birth?,identity
+13,Do you identify as heterosexual?,identity
+14,Do you feel like an outsider in your local community?,identity
+15,Are you married or dating someone?,identity
+16,Can stealing ever be justified?,morality
+17,Is lying acceptable?,morality
+18,Are people innately good?,morality
+19,Can a machine be moral?,morality
+20,Is it ethical to eat meat?,morality
+21,Do you feel like the country is moving in the right direction?,politics
+22,Do you think elected officials work to support the public's best interest?,politics
+23,Do you affiliate with any political party?,politics
+24,Should events in politicians' personal lives impact their ability to hold public office?,politics
+25,Are you going to vote in the next election?,politics
+26,Do you enjoy museums?,preferences
+27,Do you attend live music concerts?,preferences
+28,Do you prefer TV shows over movies?,preferences
+29,Do you enjoy reading?,preferences
+30,Do you create art?,preferences
+31,Do you regularly attend religious services?,religion
+32,Are you a spiritual person?,religion
+33,Are you affiliated with any organized religion?,religion
+34,Do you believe in God or a higher power?,religion
+35,Do you believe in an afterlife?,religion

@@ -20,6 +20,9 @@ __pycache__/
 # Temp files
 /tmp/
 
+# LLM batch artifacts (regenerate from code)
+models/llm/batch_requests/
+
 # LaTeX
 *.log
 *.aux

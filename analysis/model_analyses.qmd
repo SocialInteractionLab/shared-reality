@@ -1,0 +1,290 @@
+---
+title: "Computational Model Analyses"
+author: "Reproducibility Code"
+format:
+  html:
+    code-fold: true
+    toc: true
+    toc-depth: 3
+jupyter: python3
+execute:
+  warning: false
+  message: false
+---
+
+This document reproduces the computational model analyses and Figure 4 from the paper.
+
+1. **Setup** - Load model and data
+2. **Model Comparison** - Nested model evaluation
+3. **Figure 4** - Main model figure
+4. **LLM Analysis** - Pre-computed LLM predictions
+5. **Summary** - Key statistics
+
+## 1. Setup
+
+```{python}
+import sys
+from pathlib import Path
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# Find project root
+base_dir = Path.cwd().resolve()
+while base_dir.name and not (base_dir / 'data').exists():
+    base_dir = base_dir.parent
+sys.path.insert(0, str(base_dir))
+
+from models.bayesian_factor_model import (
+    UnifiedBayesianModel,
+    load_factor_loadings,
+    load_unified_data,
+    run_evaluation,
+    compute_metrics,
+    HUMAN_RATES,
+    DOMAIN_RANGES
+)
+
+print(f'Project root: {base_dir}')
+```
+
+```{python}
+# Load behavioral data
+data = load_unified_data()
+print(f'Loaded {len(data)} observations from {data["pid"].nunique()} participants')
+
+# Load factor structure
+loadings = load_factor_loadings(k=4)
+print(f'Factor loadings shape: {loadings.shape}')
+```
+
+## 2. Model Comparison
+
+Paper reports nested model comparison with k ∈ {1, 4, 35} factors.
+
+```{python}
+# Model parameters (from paper)
+PARAMS = {
+    'sigma_obs': 0.3,
+    'sigma_prior': 2.0,
+    'match_threshold': 1.5,
+    'epsilon': 0.4,
+}
+
+# Define nested models
+model_specs = {
+    'k=1 (baseline)': {'k': 1, 'infer_lambda': True},
+    'k=4 (factor)': {'k': 4, 'infer_lambda': True},
+    'k=35 (full cov)': {'k': 35, 'infer_lambda': True},
+}
+```
+
+```{python}
+#| output: false
+# Run evaluation for each model
+results = {}
+predictions = {}
+
+for name, spec in model_specs.items():
+    print(f'Evaluating {name}...')
+    model = UnifiedBayesianModel(
+        k=spec['k'],
+        infer_lambda=spec['infer_lambda'],
+        **PARAMS
+    )
+    pred_df = run_evaluation(model, data)
+    pred_df['model'] = name
+    predictions[name] = pred_df
+    results[name] = compute_metrics(pred_df)
+
+# Combine all predictions
+all_preds = pd.concat(predictions.values(), ignore_index=True)
+```
+
+```{python}
+# Print comparison table
+print('=== Model Comparison ===\n')
+print(f'{"Model":<20} {"Same Effect":>12} {"Diff Effect":>12} {"Gradient":>10}')
+print('-' * 56)
+
+# Human baseline
+human_same = HUMAN_RATES[('same_domain', 'high')] - HUMAN_RATES[('same_domain', 'low')]
+human_diff = HUMAN_RATES[('different_domain', 'high')] - HUMAN_RATES[('different_domain', 'low')]
+print(f'{"Human":<20} {human_same:>+12.3f} {human_diff:>+12.3f} {human_same - human_diff:>10.3f}')
+
+for name, r in results.items():
+    same = r['same_domain_effect']
+    diff = r['different_domain_effect']
+    print(f'{name:<20} {same:>+12.3f} {diff:>+12.3f} {same - diff:>10.3f}')
+```
+
+## 3. Figure 4
+
+```{python}
+#| fig-cap: "Figure 4: Factor structure captures systematic generalization"
+#| fig-width: 12
+#| fig-height: 4
+
+# Get main model predictions (k=4)
+main_preds = predictions['k=4 (factor)'].copy()
+main_preds['domain'] = main_preds['question_domain'].str.lower()
+
+fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+
+# --- Panel A: Generalization Gradient ---
+ax = axes[0]
+qt_labels = ['Observed', 'Same\nDomain', 'Different\nDomain']
+qt_keys = ['observed', 'same_domain', 'different_domain']
+x = np.arange(len(qt_keys))
+width = 0.35
+
+# Human effects
+human_effects = [HUMAN_RATES[(qt, 'high')] - HUMAN_RATES[(qt, 'low')] for qt in qt_keys]
+
+# Model effects
+model_effects = []
+for qt in qt_keys:
+    qt_preds = main_preds[main_preds['question_type'] == qt]
+    high = qt_preds[qt_preds['match_type'] == 'high']['pred_prob'].mean()
+    low = qt_preds[qt_preds['match_type'] == 'low']['pred_prob'].mean()
+    model_effects.append(high - low)
+
+ax.bar(x - width/2, human_effects, width, label='Human', color='#2ecc71', alpha=0.8)
+ax.bar(x + width/2, model_effects, width, label='Model (k=4)', color='#3498db', alpha=0.8)
+ax.set_xticks(x)
+ax.set_xticklabels(qt_labels)
+ax.set_ylabel('Effect (High - Low Match)')
+ax.set_title('A. Generalization Gradient', fontweight='bold')
+ax.legend(frameon=False)
+ax.axhline(y=0, color='gray', linestyle='-', linewidth=0.5)
+
+# --- Panel B: Domain-level predictions ---
+ax = axes[1]
+
+# Compute domain effects
+domain_data = []
+for domain in DOMAIN_RANGES.keys():
+    for qt in ['same_domain', 'different_domain']:
+        domain_preds = main_preds[(main_preds['domain'] == domain) &
+                                   (main_preds['question_type'] == qt)]
+        if len(domain_preds) == 0:
+            continue
+        high = domain_preds[domain_preds['match_type'] == 'high']['pred_prob'].mean()
+        low = domain_preds[domain_preds['match_type'] == 'low']['pred_prob'].mean()
+        model_effect = high - low
+
+        # Get human effect (approximate from data if available)
+        human_high = domain_preds[domain_preds['match_type'] == 'high']['actual'].mean()
+        human_low = domain_preds[domain_preds['match_type'] == 'low']['actual'].mean()
+        human_effect = human_high - human_low
+
+        domain_data.append({
+            'domain': domain,
+            'question_type': qt,
+            'model_effect': model_effect,
+            'human_effect': human_effect
+        })
+
+domain_df = pd.DataFrame(domain_data)
+
+# Scatter plot
+colors = {'same_domain': '#3498db', 'different_domain': '#95a5a6'}
+markers = {'same_domain': 'o', 'different_domain': 's'}
+for qt in ['same_domain', 'different_domain']:
+    qt_df = domain_df[domain_df['question_type'] == qt]
+    ax.scatter(qt_df['model_effect'], qt_df['human_effect'],
+               c=colors[qt], marker=markers[qt], s=80, alpha=0.8,
+               label='Same domain' if qt == 'same_domain' else 'Different domain')
+
+# Correlation
+r = np.corrcoef(domain_df['model_effect'], domain_df['human_effect'])[0, 1]
+ax.text(0.05, 0.95, f'r = {r:.2f}', transform=ax.transAxes, fontsize=11)
+
+# Diagonal line
+lims = [min(ax.get_xlim()[0], ax.get_ylim()[0]),
+        max(ax.get_xlim()[1], ax.get_ylim()[1])]
+ax.plot(lims, lims, 'k--', alpha=0.3, linewidth=1)
+ax.set_xlim(lims)
+ax.set_ylim(lims)
+
+ax.set_xlabel('Model Effect')
+ax.set_ylabel('Human Effect')
+ax.set_title('B. Domain-level Fit', fontweight='bold')
+ax.legend(frameon=False, loc='lower right')
+
+# --- Panel C: Model comparison ---
+ax = axes[2]
+
+# Compute log-likelihoods
+model_names = list(results.keys())
+lls = []
+for name in model_names:
+    pred_df = predictions[name]
+    probs = pred_df['pred_prob'].clip(1e-10, 1 - 1e-10)
+    actual = pred_df['actual'].values
+    ll = np.sum(actual * np.log(probs) + (1 - actual) * np.log(1 - probs))
+    lls.append(ll)
+
+# Normalize to baseline
+baseline_ll = lls[0]
+delta_lls = [ll - baseline_ll for ll in lls]
+
+colors = ['#e74c3c', '#2ecc71', '#3498db']
+bars = ax.bar(range(len(model_names)), delta_lls, color=colors, alpha=0.8)
+ax.set_xticks(range(len(model_names)))
+ax.set_xticklabels(['k=1\n(baseline)', 'k=4\n(factor)', 'k=35\n(full)'])
+ax.set_ylabel('ΔLL vs baseline')
+ax.set_title('C. Model Comparison', fontweight='bold')
+ax.axhline(y=0, color='gray', linestyle='-', linewidth=0.5)
+
+plt.tight_layout()
+plt.savefig(base_dir / 'outputs' / 'figures' / 'figure4.pdf', dpi=300, bbox_inches='tight')
+plt.show()
+
+print(f'\nDomain-level correlation: r = {r:.2f}')
+print(f'Paper reports: r = 0.91')
+```
+
+## 4. LLM Analysis
+
+Paper reports: LLM accuracy improves from 18.1% (prior) to 33.7% (with conversation), with gradient: observed 72.6%, same-domain 38.3%, different-domain 31.8%.
+
+```{python}
+# Load pre-computed LLM predictions
+llm_accuracy = pd.read_csv(base_dir / 'data' / 'llm_results' / 'nochat_accuracy.csv')
+
+print('=== LLM Accuracy by Question Type ===\n')
+
+# Overall accuracy (exact match)
+# prob_correct is P(correct response), accuracy is when argmax matches
+llm_accuracy['correct'] = llm_accuracy['prob_correct'] > 0.2  # threshold for "correct"
+
+for cat in ['observed', 'same_domain', 'different_domain']:
+    if cat == 'observed':
+        subset = llm_accuracy[llm_accuracy['category'] == 'matched']
+    else:
+        subset = llm_accuracy[llm_accuracy['category'] == cat]
+    if len(subset) > 0:
+        acc = subset['prob_correct'].mean() * 100
+        print(f'{cat}: {acc:.1f}%')
+
+print(f'\nPaper reports: observed 72.6%, same-domain 38.3%, different-domain 31.8%')
+```
+
+## 5. Summary Statistics
+
+```{python}
+print('=== Key Results Summary ===\n')
+
+# Gradient
+print('Generalization Gradient (k=4 model):')
+for i, qt in enumerate(qt_keys):
+    print(f'  {qt_labels[i]}: {model_effects[i]:+.3f}')
+
+print(f'\nDomain-level fit: r = {r:.2f}')
+
+# Model comparison
+print(f'\nModel comparison (ΔLL vs k=1 baseline):')
+for name, dll in zip(model_names, delta_lls):
+    print(f'  {name}: {dll:+.0f}')
+```
