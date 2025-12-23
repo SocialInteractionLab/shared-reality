@@ -73,10 +73,7 @@ data_dir = base_dir / 'data'
 figures_dir = base_dir / 'outputs' / 'figures'
 figures_dir.mkdir(parents=True, exist_ok=True)
 
-sys.path.append(str(base_dir / 'env'))
-from proj_config import match_palette_values
-
-lowhigh_palette = [match_palette_values[0], match_palette_values[2]]
+lowhigh_palette = ['#648FFF', '#DC267F']  # low (blue), high (pink)
 print(f'Data directory: {data_dir}')
 ```
 
