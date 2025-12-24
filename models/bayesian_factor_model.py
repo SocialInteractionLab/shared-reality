@@ -1,17 +1,23 @@
 """
-Hierarchical Bayesian Factor Model for Commonality Inference.
+Bayesian Factor Model for Commonality Inference.
 
-Partner's beliefs are encoded as position θ ∈ Rᵏ in factor space.
-Factor loadings Λ define how latent factors map to survey responses.
-Transfer structure emerges from factor geometry—no manual specification needed.
+Given a single observation of a partner's response, predict how likely they are
+to match self on all other questions. Transfer structure emerges from the
+geometry of factor loadings—questions that load on similar factors show
+correlated predictions.
 
-INFERENCE (Closed-Form Gaussian)
-================================
+MODEL
+=====
+Partner's latent position:  θ ∈ Rᵏ
+Factor loadings:            Λ ∈ R^{35 × k}
+Question means:             μ ∈ R^35
+
 Prior:      θ ~ N(λ·θ_self, σ²_prior·I)
-Likelihood: r_obs | θ ~ N(Λ_obs'θ + μ_q, σ²_obs)
-Posterior:  θ | r_obs ~ N(μ_post, Σ_post)
+Likelihood: r | θ ~ N(Λθ + μ, σ²_obs·I)
+Posterior:  θ | r_obs ∝ Likelihood × Prior  (closed-form Gaussian)
 
-When infer_lambda=True, we jointly infer (λ, θ) by marginalizing over a λ grid.
+The self-projection weight λ ∈ [0,1] controls how much the prior centers on
+self's position. When infer_lambda=True, we marginalize over λ using Bayes rule.
 """
 
 from pathlib import Path
@@ -26,135 +32,147 @@ from jax.scipy.stats import norm as jax_norm
 
 jax.config.update("jax_platform_name", "cpu")
 
-# ============================================================================
-# PATHS AND CONSTANTS
-# ============================================================================
 
-PAPER_DIR = Path(__file__).parent.parent
-DATA_DIR = PAPER_DIR / "data"
+# Paths
+DATA_DIR = Path(__file__).parent.parent / "data"
 N_QUESTIONS = 35
 
+# Domain structure (for evaluation)
 DOMAIN_RANGES = {
-    'arbitrary': (0, 5),
-    'background': (5, 10),
-    'identity': (10, 15),
-    'morality': (15, 20),
-    'politics': (20, 25),
-    'preferences': (25, 30),
+    'arbitrary': (0, 5), 'background': (5, 10), 'identity': (10, 15),
+    'morality': (15, 20), 'politics': (20, 25), 'preferences': (25, 30),
     'religion': (30, 35),
 }
 
 
-# ============================================================================
-# JAX-ACCELERATED CORE FUNCTIONS
-# ============================================================================
+# =============================================================================
+# INFERENCE (JAX-accelerated)
+# =============================================================================
 
 @jit
-def _compute_posterior(L_obs, r_centered, mu_0, Sigma_0_inv, sigma_obs_sq):
-    """Compute posterior mean and covariance via Gaussian conjugacy."""
-    precision_obs = jnp.outer(L_obs, L_obs) / sigma_obs_sq
-    Sigma_post_inv = Sigma_0_inv + precision_obs
-    Sigma_post = jnp.linalg.inv(Sigma_post_inv)
-    mu_post = Sigma_post @ (Sigma_0_inv @ mu_0 + L_obs * r_centered / sigma_obs_sq)
-    return mu_post, Sigma_post
+def _project_to_factors(responses, loadings, means):
+    """Project responses onto factor space via least-squares: θ = (Λ'Λ)⁻¹Λ'(r - μ)"""
+    centered = responses - means
+    LtL_inv = jnp.linalg.inv(loadings.T @ loadings + 1e-6 * jnp.eye(loadings.shape[1]))
+    return LtL_inv @ loadings.T @ centered
 
 
 @jit
-def _predict_all_questions(L, mu_q, mu_post, Sigma_post, r_self_all, tau, sigma_obs_sq):
-    """Predict match probabilities for all questions given posterior."""
-    pred_means = L @ mu_post + mu_q
-    pred_vars = jnp.sum((L @ Sigma_post) * L, axis=1) + sigma_obs_sq
+def _posterior_update(L_obs, r_obs, mu_obs, prior_mean, prior_precision, obs_variance):
+    """
+    Bayesian update: P(θ | r_obs) ∝ P(r_obs | θ) P(θ)
+
+    Returns posterior mean and covariance.
+    """
+    r_centered = r_obs - mu_obs
+    obs_precision = jnp.outer(L_obs, L_obs) / obs_variance
+    post_precision = prior_precision + obs_precision
+    post_cov = jnp.linalg.inv(post_precision)
+    post_mean = post_cov @ (prior_precision @ prior_mean + L_obs * r_centered / obs_variance)
+    return post_mean, post_cov
+
+
+@jit
+def _predict_match_probs(loadings, means, post_mean, post_cov, r_self, threshold, obs_variance):
+    """
+    Predict P(|r_partner - r_self| ≤ τ) for each question.
+
+    Predictive distribution: r_q ~ N(Λ_q'θ + μ_q, Λ_q'Σ_post Λ_q + σ²)
+    """
+    pred_means = loadings @ post_mean + means
+    pred_vars = jnp.sum((loadings @ post_cov) * loadings, axis=1) + obs_variance
     pred_stds = jnp.sqrt(pred_vars)
-    upper = (r_self_all + tau - pred_means) / pred_stds
-    lower = (r_self_all - tau - pred_means) / pred_stds
+
+    upper = (r_self + threshold - pred_means) / pred_stds
+    lower = (r_self - threshold - pred_means) / pred_stds
     return jnp.clip(jax_norm.cdf(upper) - jax_norm.cdf(lower), 0.0, 1.0)
 
 
 @jit
-def _marginal_likelihood(L_obs, r_obs, mu_q_obs, theta_self, lam, Sigma_0, sigma_obs_sq):
-    """Compute P(r_obs | λ) for lambda posterior calculation."""
-    mu_0 = lam * theta_self
-    marginal_mean = L_obs @ mu_0 + mu_q_obs
-    marginal_var = L_obs @ Sigma_0 @ L_obs + sigma_obs_sq
-    return jax_norm.pdf(r_obs, marginal_mean, jnp.sqrt(marginal_var))
+def _marginal_likelihood_of_lambda(L_obs, r_obs, mu_obs, theta_self, lam, prior_cov, obs_variance):
+    """P(r_obs | λ) = ∫ P(r_obs | θ) P(θ | λ) dθ  — marginalizes over θ."""
+    prior_mean = lam * theta_self
+    pred_mean = L_obs @ prior_mean + mu_obs
+    pred_var = L_obs @ prior_cov @ L_obs + obs_variance
+    return jax_norm.pdf(r_obs, pred_mean, jnp.sqrt(pred_var))
 
 
 @jit
-def _predict_with_lambda_inference(
-    obs_q, r_partner_obs, r_self_all, L, mu_q,
-    Sigma_0, Sigma_0_inv, sigma_obs, tau,
-    lambda_grid, lambda_prior_probs
+def _predict_with_lambda_grid(
+    obs_q, r_obs, r_self, loadings, means,
+    prior_cov, prior_precision, obs_variance, threshold,
+    lambda_grid, lambda_prior
 ):
-    """Full prediction pipeline with joint (λ, θ) inference."""
-    sigma_obs_sq = sigma_obs ** 2
-    L_obs = L[obs_q]
-    r_centered = r_partner_obs - mu_q[obs_q]
+    """
+    Full prediction: marginalize over λ grid, then over θ.
 
-    # Project self onto factor space
-    r_self_centered = r_self_all - mu_q
-    LtL_inv = jnp.linalg.inv(L.T @ L + 1e-6 * jnp.eye(L.shape[1]))
-    theta_self = LtL_inv @ L.T @ r_self_centered
+    1. Compute θ_self (self's position in factor space)
+    2. For each λ: compute P(r_obs | λ) and P(predictions | r_obs, λ)
+    3. Weight predictions by P(λ | r_obs) ∝ P(r_obs | λ) P(λ)
+    """
+    L_obs = loadings[obs_q]
+    mu_obs = means[obs_q]
+    theta_self = _project_to_factors(r_self, loadings, means)
 
-    # Compute P(λ | r_obs) via marginal likelihoods
+    # Posterior over λ
     marginal_liks = vmap(
-        lambda lam: _marginal_likelihood(L_obs, r_partner_obs, mu_q[obs_q], theta_self, lam, Sigma_0, sigma_obs_sq)
+        lambda lam: _marginal_likelihood_of_lambda(
+            L_obs, r_obs, mu_obs, theta_self, lam, prior_cov, obs_variance
+        )
     )(lambda_grid)
-    lambda_posterior = marginal_liks * lambda_prior_probs
+    lambda_posterior = marginal_liks * lambda_prior
     lambda_posterior = lambda_posterior / (lambda_posterior.sum() + 1e-10)
 
-    # Predict for each λ, then marginalize
-    def predict_for_lambda(lam):
-        mu_0 = lam * theta_self
-        mu_post, Sigma_post = _compute_posterior(L_obs, r_centered, mu_0, Sigma_0_inv, sigma_obs_sq)
-        return _predict_all_questions(L, mu_q, mu_post, Sigma_post, r_self_all, tau, sigma_obs_sq)
+    # Predictions for each λ
+    def predict_given_lambda(lam):
+        prior_mean = lam * theta_self
+        post_mean, post_cov = _posterior_update(
+            L_obs, r_obs, mu_obs, prior_mean, prior_precision, obs_variance
+        )
+        return _predict_match_probs(
+            loadings, means, post_mean, post_cov, r_self, threshold, obs_variance
+        )
 
-    predictions_per_lambda = vmap(predict_for_lambda)(lambda_grid)
-    return lambda_posterior @ predictions_per_lambda
+    preds_per_lambda = vmap(predict_given_lambda)(lambda_grid)
+    return lambda_posterior @ preds_per_lambda
 
 
-# ============================================================================
+# =============================================================================
 # DATA LOADING
-# ============================================================================
+# =============================================================================
 
 def load_responses() -> pd.DataFrame:
-    """Load pre-interaction responses (participants × 35 questions)."""
+    """Load response matrix (participants × 35 questions)."""
     df = pd.read_csv(DATA_DIR / "responses.csv", low_memory=False)
-    responses = df.pivot_table(index='pid', columns='question', values='preChatResponse', aggfunc='first')
-    responses.columns = [f'Q{c}' for c in responses.columns]
-    return responses
+    return df.pivot_table(index='pid', columns='question', values='preChatResponse', aggfunc='first')
 
 
 def load_correlation_matrix() -> np.ndarray:
-    """Compute empirical 35×35 correlation matrix from responses."""
+    """Compute 35×35 correlation matrix from responses."""
     return np.corrcoef(load_responses().values.T)
 
 
 def load_factor_loadings(k: Optional[int] = None) -> np.ndarray:
-    """Compute factor loadings via eigendecomposition of correlation matrix."""
-    corr_matrix = load_correlation_matrix()
-    eigenvalues, eigenvectors = np.linalg.eigh(corr_matrix)
-    idx = np.argsort(eigenvalues)[::-1]
-    loadings = eigenvectors[:, idx] * np.sqrt(np.maximum(eigenvalues[idx], 0))
-    return loadings[:, :k] if k is not None else loadings
+    """Compute factor loadings via eigendecomposition: Λ = V·√eigenvalues."""
+    eigvals, eigvecs = np.linalg.eigh(load_correlation_matrix())
+    idx = np.argsort(eigvals)[::-1]
+    loadings = eigvecs[:, idx] * np.sqrt(np.maximum(eigvals[idx], 0))
+    return loadings[:, :k] if k else loadings
 
 
 def load_question_means() -> np.ndarray:
-    """Compute mean response for each question from population."""
+    """Population mean for each question."""
     return load_responses().values.mean(axis=0)
 
 
-def load_unified_data() -> pd.DataFrame:
-    """Load unified evaluation dataset with column aliases."""
-    df = pd.read_csv(DATA_DIR / "responses.csv", low_memory=False)
-    df['own_response'] = df['preChatResponse']
-    df['question_domain'] = df['preChatDomain']
-    df['matched_question'] = df['matchedIdx']
-    return df
+def load_evaluation_data() -> pd.DataFrame:
+    """Load data for model evaluation."""
+    return pd.read_csv(DATA_DIR / "responses.csv", low_memory=False)
 
 
-# ============================================================================
+# =============================================================================
 # MODEL
-# ============================================================================
+# =============================================================================
 
 class BayesianFactorModel:
     """
@@ -163,20 +181,17 @@ class BayesianFactorModel:
     Parameters
     ----------
     k : int
-        Factor dimensionality. k=0 means flat (no structure).
+        Number of factors (0 = flat baseline with no structure)
     infer_lambda : bool
-        If True, jointly infer self-projection weight λ from data.
-        If False, use fixed λ value.
+        If True, infer self-projection weight λ from data
     lam : float
-        Fixed λ value when infer_lambda=False.
-    sigma_obs : float
-        Observation noise σ_obs.
-    sigma_prior : float
-        Prior standard deviation on factor position.
+        Fixed λ when infer_lambda=False
+    sigma_obs, sigma_prior : float
+        Observation and prior noise standard deviations
     match_threshold : float
-        τ, threshold for defining a "match".
+        τ for defining a "match" (|r_partner - r_self| ≤ τ)
     epsilon : float
-        Response noise / lapse rate ε ∈ [0, 1].
+        Lapse rate (probability of random response)
     """
 
     def __init__(
@@ -193,102 +208,79 @@ class BayesianFactorModel:
         lambda_grid_size: int = 21,
     ):
         self.k = k
-        self.sigma_obs = sigma_obs
-        self.sigma_prior = sigma_prior
-        self.tau = match_threshold
         self.epsilon = np.clip(epsilon, 0.0, 1.0)
-        self.infer_lambda = infer_lambda
-        self.fixed_lam = np.clip(lam, 0.0, 1.0)
 
-        # Load or use provided data
-        self.mu_q = question_means if question_means is not None else load_question_means()
-
-        # Handle factor structure
+        # Load data
+        means = question_means if question_means is not None else load_question_means()
         if k == 0:
-            self.L = np.ones((N_QUESTIONS, 1))
-            self.k_effective = 1
+            L = np.ones((N_QUESTIONS, 1))  # Flat: all questions identical
+        elif loadings is not None:
+            L = loadings[:, :k]
         else:
-            if loadings is not None:
-                self.L = loadings[:, :k] if loadings.shape[1] > k else loadings
-            else:
-                self.L = load_factor_loadings(k=k)
-            self.k_effective = self.L.shape[1]
+            L = load_factor_loadings(k)
 
-        # Prior covariance
-        self.Sigma_0 = sigma_prior**2 * np.eye(self.k_effective)
-        self.Sigma_0_inv = np.eye(self.k_effective) / sigma_prior**2
+        k_eff = L.shape[1]
 
-        # Lambda grid for inference
-        self.lambda_grid = np.linspace(0, 1, lambda_grid_size)
-        self.lambda_prior_probs = np.ones(lambda_grid_size) / lambda_grid_size
+        # Set up λ grid (single value if not inferring)
+        if infer_lambda:
+            lam_grid = np.linspace(0, 1, lambda_grid_size)
+            lam_prior = np.ones(lambda_grid_size) / lambda_grid_size
+        else:
+            lam_grid = np.array([np.clip(lam, 0, 1)])
+            lam_prior = np.array([1.0])
 
-        # Cache JAX arrays
-        self._L = jnp.array(self.L)
-        self._mu_q = jnp.array(self.mu_q)
-        self._Sigma_0 = jnp.array(self.Sigma_0)
-        self._Sigma_0_inv = jnp.array(self.Sigma_0_inv)
-        self._lambda_grid = jnp.array(self.lambda_grid)
-        self._lambda_prior_probs = jnp.array(self.lambda_prior_probs)
+        # Cache as JAX arrays
+        self._loadings = jnp.array(L)
+        self._means = jnp.array(means)
+        self._prior_cov = jnp.array(sigma_prior**2 * np.eye(k_eff))
+        self._prior_precision = jnp.array(np.eye(k_eff) / sigma_prior**2)
+        self._obs_variance = sigma_obs**2
+        self._threshold = match_threshold
+        self._lambda_grid = jnp.array(lam_grid)
+        self._lambda_prior = jnp.array(lam_prior)
 
-    def predict(self, obs_q: int, r_partner_obs: float, r_self_all: np.ndarray) -> np.ndarray:
+        # For repr
+        self._infer_lambda = infer_lambda
+        self._fixed_lam = lam
+
+    def predict(self, obs_q: int, r_partner: float, r_self: np.ndarray) -> np.ndarray:
         """
-        Predict match probabilities for all questions.
+        Predict P(match) for all questions given one observation.
 
         Args:
-            obs_q: Index of observed question (0-indexed)
-            r_partner_obs: Partner's observed response
-            r_self_all: Self's responses on all 35 questions
+            obs_q: Which question was observed (0-indexed)
+            r_partner: Partner's response on that question
+            r_self: Self's responses on all 35 questions
 
         Returns:
-            Array of P(match) for each question
+            35-element array of match probabilities
         """
-        r_self_jax = jnp.array(r_self_all)
-
-        if self.infer_lambda:
-            preds = _predict_with_lambda_inference(
-                obs_q, r_partner_obs, r_self_jax,
-                self._L, self._mu_q, self._Sigma_0, self._Sigma_0_inv,
-                self.sigma_obs, self.tau, self._lambda_grid, self._lambda_prior_probs
-            )
-        else:
-            # Fixed lambda: single posterior update
-            L_obs = self._L[obs_q]
-            r_centered = r_partner_obs - self._mu_q[obs_q]
-
-            # Compute theta_self for prior mean
-            r_self_centered = r_self_jax - self._mu_q
-            LtL_inv = jnp.linalg.inv(self._L.T @ self._L + 1e-6 * jnp.eye(self.k_effective))
-            theta_self = LtL_inv @ self._L.T @ r_self_centered
-            mu_0 = self.fixed_lam * theta_self
-
-            mu_post, Sigma_post = _compute_posterior(
-                L_obs, r_centered, mu_0, self._Sigma_0_inv, self.sigma_obs**2
-            )
-            preds = _predict_all_questions(
-                self._L, self._mu_q, mu_post, Sigma_post,
-                r_self_jax, self.tau, self.sigma_obs**2
-            )
-
+        preds = _predict_with_lambda_grid(
+            obs_q, r_partner, jnp.array(r_self),
+            self._loadings, self._means,
+            self._prior_cov, self._prior_precision, self._obs_variance, self._threshold,
+            self._lambda_grid, self._lambda_prior
+        )
         # Apply lapse rate
         preds = (1 - self.epsilon) * preds + self.epsilon * 0.5
         return np.asarray(preds)
 
     def __repr__(self):
-        if self.infer_lambda:
-            return f"BayesianFactorModel(k={self.k}, infer_λ=True, ε={self.epsilon})"
-        return f"BayesianFactorModel(k={self.k}, λ={self.fixed_lam}, ε={self.epsilon})"
+        if self._infer_lambda:
+            return f"BayesianFactorModel(k={self.k}, infer_λ=True)"
+        return f"BayesianFactorModel(k={self.k}, λ={self._fixed_lam})"
 
 
-# ============================================================================
-# EVALUATION HELPERS
-# ============================================================================
+# =============================================================================
+# EVALUATION
+# =============================================================================
 
 def run_evaluation(model, data: Optional[pd.DataFrame] = None) -> pd.DataFrame:
-    """Run model on all participants and return predictions DataFrame."""
+    """Run model on all participants, return predictions."""
     if data is None:
-        data = load_unified_data()
+        data = load_evaluation_data()
 
-    predictions = []
+    results = []
     for pid in data["pid"].unique():
         subj = data[data["pid"] == pid]
         matched = subj[subj["is_matched"] == True]
@@ -296,64 +288,53 @@ def run_evaluation(model, data: Optional[pd.DataFrame] = None) -> pd.DataFrame:
         if len(matched) == 0:
             continue
 
-        obs_q = int(matched["matched_question"].iloc[0]) - 1
-        partner_obs = matched["partner_response"].iloc[0]
-
-        if pd.isna(partner_obs):
+        obs_q = int(matched["matchedIdx"].iloc[0]) - 1  # 0-indexed
+        r_partner = matched["partner_response"].iloc[0]
+        if pd.isna(r_partner):
             continue
 
-        match_type = matched["match_type"].iloc[0]
-
-        # Get self's responses
-        r_self_all = np.zeros(N_QUESTIONS)
+        # Build response vector
+        r_self = np.zeros(N_QUESTIONS)
         for _, row in subj.iterrows():
-            r_self_all[int(row["question"]) - 1] = row["own_response"]
+            r_self[int(row["question"]) - 1] = row["preChatResponse"]
 
-        pred_probs = model.predict(obs_q, float(partner_obs), r_self_all)
+        preds = model.predict(obs_q, float(r_partner), r_self)
 
         for _, row in subj.iterrows():
-            q_idx = int(row["question"]) - 1
-            predictions.append({
+            results.append({
                 "pid": pid,
                 "question": row["question"],
-                "question_domain": row["question_domain"],
-                "match_type": match_type,
+                "question_domain": row["preChatDomain"],
+                "match_type": matched["match_type"].iloc[0],
                 "question_type": row["question_type"],
-                "pred_prob": pred_probs[q_idx],
+                "pred_prob": preds[int(row["question"]) - 1],
                 "actual": row["participant_binary_prediction"],
             })
 
-    return pd.DataFrame(predictions)
+    return pd.DataFrame(results)
 
 
 def compute_metrics(pred_df: pd.DataFrame, human_rates: Optional[Dict] = None) -> Dict:
-    """Compute evaluation metrics from predictions DataFrame."""
-    results = {}
-
+    """Compute evaluation metrics."""
     probs = pred_df["pred_prob"].values
     actual = pred_df["actual"].values
 
-    # Trial-level metrics
-    eps = 1e-10
-    ll = np.sum(actual * np.log(probs + eps) + (1 - actual) * np.log(1 - probs + eps))
-    results['log_likelihood'] = ll
-    results['accuracy'] = np.mean((probs > 0.5) == actual)
-    results['brier'] = np.mean((probs - actual) ** 2)
+    results = {
+        'log_likelihood': np.sum(actual * np.log(probs + 1e-10) + (1 - actual) * np.log(1 - probs + 1e-10)),
+        'accuracy': np.mean((probs > 0.5) == actual),
+        'brier': np.mean((probs - actual) ** 2),
+    }
 
-    # Cell-level rates
+    # Cell-level rates and effects
     model_rates = {}
     for qt in ['observed', 'same_domain', 'different_domain']:
         for mt in ['high', 'low']:
             cell = pred_df[(pred_df["question_type"] == qt) & (pred_df["match_type"] == mt)]
-            model_rates[(qt, mt)] = cell["pred_prob"].mean() if len(cell) > 0 else 0.5
+            model_rates[(qt, mt)] = cell["pred_prob"].mean() if len(cell) else 0.5
+        results[f'{qt}_effect'] = model_rates[(qt, 'high')] - model_rates[(qt, 'low')]
 
     results['model_rates'] = model_rates
 
-    # Effects
-    for qt in ['observed', 'same_domain', 'different_domain']:
-        results[f'{qt}_effect'] = model_rates[(qt, 'high')] - model_rates[(qt, 'low')]
-
-    # Correlation with human rates if provided
     if human_rates:
         m = [model_rates[k] for k in sorted(human_rates.keys())]
         h = [human_rates[k] for k in sorted(human_rates.keys())]
