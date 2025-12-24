@@ -127,7 +127,7 @@ def _predict_bayesian(
 
 
 @jit
-def _predict_similarity_projection(obs_q, r_obs, r_self, base_rate, projection_weight):
+def _predict_similarity_projection(obs_q, r_obs, r_self, base_rate, projection_weight, threshold):
     """
     Similarity-modulated projection with self-transfer.
 
@@ -143,12 +143,15 @@ def _predict_similarity_projection(obs_q, r_obs, r_self, base_rate, projection_w
     - If my responses are correlated within domains (typical), transfer is stronger within domains
     - Gradients emerge as an artifact of self-response structure, not population statistics
 
+    Uses the same threshold parameter as the Bayesian model for consistency.
+
     Parameters:
         obs_q: Index of observed question
         r_obs: Partner's observed response
         r_self: Self's responses (35,)
         base_rate: Base P(match)
         projection_weight: How much similarity boosts P(match)
+        threshold: Scale for similarity decay (same as match_threshold in Bayesian model)
 
     Returns:
         (35,) array with question-specific predictions based on self-similarity
@@ -158,12 +161,12 @@ def _predict_similarity_projection(obs_q, r_obs, r_self, base_rate, projection_w
     # GLOBAL: Perceived similarity from observed agreement
     # High when partner's response matches my response on observed question
     obs_diff = jnp.abs(r_obs - r_self_obs)
-    perceived_similarity = jnp.exp(-obs_diff / 2.0)  # Range [~0.14, 1.0]
+    perceived_similarity = jnp.exp(-obs_diff / threshold)
 
     # LOCAL: Self-response similarity for each question
     # High when I answered question q similarly to the observed question
     self_diff = jnp.abs(r_self - r_self_obs)
-    self_similarity = jnp.exp(-self_diff / 2.0)  # Range [~0.14, 1.0]
+    self_similarity = jnp.exp(-self_diff / threshold)
 
     # Combined: projection modulated by self-similarity
     # "If you're like me (global), you'll answer like me on questions
@@ -184,7 +187,7 @@ def _predict_single(
         obs_q, r_obs, r_self, loadings, means,
         prior_cov, prior_precision, obs_variance, threshold
     )
-    p_proj = _predict_similarity_projection(obs_q, r_obs, r_self, base_rate, projection_weight)
+    p_proj = _predict_similarity_projection(obs_q, r_obs, r_self, base_rate, projection_weight, threshold)
 
     return (1 - beta) * p_bayes + beta * p_proj
 
