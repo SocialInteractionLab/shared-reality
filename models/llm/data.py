@@ -27,7 +27,7 @@ def load_unified_data() -> pd.DataFrame:
         DataFrame with columns including experiment, pid, question, own_response,
         partner_response, match_type, matched_question, is_matched, question_type
     """
-    df = pd.read_csv(DATA_DIR / "experiment_data.csv", low_memory=False)
+    df = pd.read_csv(DATA_DIR / "responses.csv", low_memory=False)
     # Add column aliases for backward compatibility
     df['own_response'] = df['preChatResponse']
     df['question_domain'] = df['preChatDomain']

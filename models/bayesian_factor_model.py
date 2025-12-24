@@ -232,9 +232,9 @@ def load_factor_loadings(k: Optional[int] = None) -> np.ndarray:
 def load_responses() -> pd.DataFrame:
     """Load pre-interaction responses (1169 participants × 35 questions).
 
-    Derived from experiment_data.csv by pivoting.
+    Derived from responses.csv by pivoting.
     """
-    df = pd.read_csv(DATA_DIR / "experiment_data.csv", low_memory=False)
+    df = pd.read_csv(DATA_DIR / "responses.csv", low_memory=False)
     responses = df.pivot_table(index='pid', columns='question', values='preChatResponse', aggfunc='first')
     responses.columns = [f'Q{c}' for c in responses.columns]
     return responses
@@ -254,7 +254,7 @@ def load_question_means() -> np.ndarray:
 
 def load_unified_data() -> pd.DataFrame:
     """Load unified evaluation dataset."""
-    df = pd.read_csv(DATA_DIR / "experiment_data.csv", low_memory=False)
+    df = pd.read_csv(DATA_DIR / "responses.csv", low_memory=False)
     # Add column aliases for backward compatibility
     df['own_response'] = df['preChatResponse']
     df['question_domain'] = df['preChatDomain']
