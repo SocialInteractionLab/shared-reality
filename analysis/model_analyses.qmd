@@ -36,7 +36,7 @@ while base_dir.name and not (base_dir / 'data').exists():
 sys.path.insert(0, str(base_dir))
 
 from models.bayesian_factor_model import (
-    UnifiedBayesianModel,
+    BayesianFactorModel,
     load_factor_loadings,
     load_unified_data,
     run_evaluation,
@@ -97,7 +97,7 @@ predictions = {}
 
 for name, spec in model_specs.items():
     print(f'Evaluating {name}...')
-    model = UnifiedBayesianModel(
+    model = BayesianFactorModel(
         k=spec['k'],
         infer_lambda=spec['infer_lambda'],
         **PARAMS
@@ -369,7 +369,7 @@ k_sweep_results = []
 
 print('Computing k-sweep...')
 for k_val in k_values:
-    model = UnifiedBayesianModel(k=k_val, sigma_obs=0.3, sigma_prior=2.0,
+    model = BayesianFactorModel(k=k_val, sigma_obs=0.3, sigma_prior=2.0,
                                   match_threshold=1.5, epsilon=0.4, infer_lambda=True)
     pred_df = run_evaluation(model, data)
     metrics = compute_metrics(pred_df, human_rates=HUMAN_RATES)
