@@ -41,7 +41,6 @@ from models.bayesian_factor_model import (
     load_unified_data,
     run_evaluation,
     compute_metrics,
-    HUMAN_RATES,
     DOMAIN_RANGES
 )
 
@@ -53,9 +52,20 @@ print(f'Project root: {base_dir}')
 data = load_unified_data()
 print(f'Loaded {len(data)} observations from {data["pid"].nunique()} participants')
 
+# Compute human rates from data (not hard-coded)
+HUMAN_RATES = {}
+for qt in ['observed', 'same_domain', 'different_domain']:
+    for mt in ['high', 'low']:
+        subset = data[(data['question_type'] == qt) & (data['match_type'] == mt)]
+        HUMAN_RATES[(qt, mt)] = subset['participant_binary_prediction'].mean()
+
+print('\nHuman rates (from data):')
+for (qt, mt), rate in sorted(HUMAN_RATES.items()):
+    print(f'  {qt}, {mt}: {rate:.3f}')
+
 # Load factor structure
 loadings = load_factor_loadings(k=4)
-print(f'Factor loadings shape: {loadings.shape}')
+print(f'\nFactor loadings shape: {loadings.shape}')
 ```
 
 ## 2. Model Comparison
@@ -95,7 +105,7 @@ for name, spec in model_specs.items():
     pred_df = run_evaluation(model, data)
     pred_df['model'] = name
     predictions[name] = pred_df
-    results[name] = compute_metrics(pred_df)
+    results[name] = compute_metrics(pred_df, human_rates=HUMAN_RATES)
 
 # Combine all predictions
 all_preds = pd.concat(predictions.values(), ignore_index=True)

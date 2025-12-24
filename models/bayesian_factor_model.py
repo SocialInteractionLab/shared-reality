@@ -1274,10 +1274,18 @@ def run_evaluation(model, data: Optional[pd.DataFrame] = None, n_subjects: Optio
     return pd.DataFrame(predictions)
 
 
-def compute_metrics(pred_df: pd.DataFrame) -> Dict:
+def compute_metrics(pred_df: pd.DataFrame, human_rates: Optional[Dict] = None) -> Dict:
     """
     Compute evaluation metrics including domain-specific effects.
+
+    Args:
+        pred_df: DataFrame with model predictions
+        human_rates: Optional dict of human rates {(question_type, match_type): rate}
+                    If None, uses module-level HUMAN_RATES constant.
     """
+    if human_rates is None:
+        human_rates = HUMAN_RATES
+
     results = {}
 
     probs = pred_df["pred_prob"].values
@@ -1305,14 +1313,16 @@ def compute_metrics(pred_df: pd.DataFrame) -> Dict:
         results[f'{qt}_effect'] = model_rates[(qt, 'high')] - model_rates[(qt, 'low')]
 
     # Correlation with human rates
-    m = [model_rates[k] for k in sorted(HUMAN_RATES.keys())]
-    h = [HUMAN_RATES[k] for k in sorted(HUMAN_RATES.keys())]
+    m = [model_rates[k] for k in sorted(human_rates.keys())]
+    h = [human_rates[k] for k in sorted(human_rates.keys())]
     results['correlation'] = float(np.corrcoef(m, h)[0, 1])
-    results['mse'] = float(np.mean([(model_rates[k] - HUMAN_RATES[k]) ** 2 for k in HUMAN_RATES]))
+    results['mse'] = float(np.mean([(model_rates[k] - human_rates[k]) ** 2 for k in human_rates]))
 
-    # Effect error
-    results['same_effect_error'] = abs(results['same_domain_effect'] - 0.143)
-    results['diff_effect_error'] = abs(results['different_domain_effect'] - 0.046)
+    # Effect error (computed from passed human_rates)
+    human_same_effect = human_rates[('same_domain', 'high')] - human_rates[('same_domain', 'low')]
+    human_diff_effect = human_rates[('different_domain', 'high')] - human_rates[('different_domain', 'low')]
+    results['same_effect_error'] = abs(results['same_domain_effect'] - human_same_effect)
+    results['diff_effect_error'] = abs(results['different_domain_effect'] - human_diff_effect)
     results['total_effect_error'] = results['same_effect_error'] + results['diff_effect_error']
 
     # Domain-specific effects (THE KEY TEST)
