@@ -201,19 +201,27 @@ DOMAIN_RANGES = {
 
 def load_factor_loadings(k: Optional[int] = None) -> np.ndarray:
     """
-    Load factor loadings from eigendecomposition of correlation matrix.
+    Compute factor loadings from eigendecomposition of correlation matrix.
 
     Loadings are computed as: Λ = V × sqrt(eigenvalues)
     where V are eigenvectors of the correlation matrix.
 
     Args:
-        k: Number of factors to use (None = all available, up to 8)
+        k: Number of factors to use (None = all 35)
 
     Returns:
         Λ ∈ R^{n_questions × k} factor loading matrix
     """
-    df = pd.read_csv(DATA_DIR / "loadings.csv", index_col=0)
-    loadings = df.values
+    corr_matrix = load_correlation_matrix()
+    eigenvalues, eigenvectors = np.linalg.eigh(corr_matrix)
+
+    # Sort by descending eigenvalue
+    idx = np.argsort(eigenvalues)[::-1]
+    eigenvalues = eigenvalues[idx]
+    eigenvectors = eigenvectors[:, idx]
+
+    # Compute loadings: V × sqrt(eigenvalues)
+    loadings = eigenvectors * np.sqrt(np.maximum(eigenvalues, 0))
 
     if k is not None:
         loadings = loadings[:, :k]
@@ -221,15 +229,21 @@ def load_factor_loadings(k: Optional[int] = None) -> np.ndarray:
     return loadings
 
 
-def load_correlation_matrix() -> np.ndarray:
-    """Load empirical 35×35 correlation matrix."""
-    df = pd.read_csv(DATA_DIR / "correlation_matrix.csv", index_col=0)
-    return df.values
-
-
 def load_responses() -> pd.DataFrame:
-    """Load pre-interaction responses (1169 participants × 35 questions)."""
-    return pd.read_csv(DATA_DIR / "responses.csv", index_col=0)
+    """Load pre-interaction responses (1169 participants × 35 questions).
+
+    Derived from experiment_data.csv by pivoting.
+    """
+    df = pd.read_csv(DATA_DIR / "experiment_data.csv", low_memory=False)
+    responses = df.pivot_table(index='pid', columns='question', values='preChatResponse', aggfunc='first')
+    responses.columns = [f'Q{c}' for c in responses.columns]
+    return responses
+
+
+def load_correlation_matrix() -> np.ndarray:
+    """Compute empirical 35×35 correlation matrix from responses."""
+    responses = load_responses()
+    return np.corrcoef(responses.values.T)
 
 
 def load_question_means() -> np.ndarray:
