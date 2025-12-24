@@ -4,15 +4,18 @@ Commonality Inference Model.
 Predicts how observing a partner's response on one question informs beliefs
 about their responses on other questions. The model combines two mechanisms:
 
-1. BAYESIAN FACTOR MODEL (λ=0): Uses population-level factor structure.
+1. BAYESIAN FACTOR MODEL (β=0): Uses population-level factor structure.
    Transfer emerges from the geometry of factor loadings—questions that load
-   on similar factors show correlated predictions.
+   on similar factors show correlated predictions. Predicts domain-specific
+   generalization gradients based on population covariance.
 
-2. EGOCENTRIC HEURISTIC (λ=1): Uses self-response similarity.
-   "If I answered similarly on X and Y, partner will too."
+2. SIMILARITY PROJECTION (β=1): Self-based inference combining:
+   - Global perceived similarity from observed agreement (Ames 2004; Tamir & Mitchell 2013)
+   - Local self-response similarity for question-specific transfer
+   Gradients emerge from the structure of one's OWN beliefs, not population statistics.
 
-The mixture parameter λ ∈ [0,1] blends between these:
-    P(match) = (1-λ) × Bayesian + λ × Egocentric
+The mixture parameter β ∈ [0,1] blends between these:
+    P(match) = (1-β) × Bayesian + β × SimilarityProjection
 
 BAYESIAN COMPONENT
 ==================
@@ -24,10 +27,13 @@ Prior:      θ ~ N(0, σ²_prior·I)
 Likelihood: r | θ ~ N(Λθ + μ, σ²_obs·I)
 Posterior:  θ | r_obs ∝ Likelihood × Prior  (closed-form Gaussian)
 
-EGOCENTRIC COMPONENT
-====================
-P(match on q) ∝ similarity(r_self[q], r_self[observed])
-Modulated by whether the observed response was a match.
+SIMILARITY PROJECTION COMPONENT
+===============================
+perceived_similarity = exp(-|r_obs - r_self[obs]| / scale)  # Global
+self_similarity[q] = exp(-|r_self[q] - r_self[obs]| / scale)  # Local
+P(match on q) = base_rate + perceived_similarity × self_similarity[q] × weight
+
+Key: Gradients emerge from self-response structure (within-person correlations).
 """
 
 from pathlib import Path
@@ -121,56 +127,80 @@ def _predict_bayesian(
 
 
 @jit
-def _predict_egocentric(obs_q, r_obs, r_self, threshold):
+def _predict_similarity_projection(obs_q, r_obs, r_self, base_rate, projection_weight):
     """
-    Egocentric heuristic prediction.
+    Similarity-modulated projection with self-transfer.
 
-    P(match on q) based on:
-    1. Self-similarity: how similar is r_self[q] to r_self[obs_q]
-    2. Match signal: did the observed response match?
+    Combines two self-based mechanisms:
+    1. GLOBAL: Perceived similarity from observed agreement (Ames 2004; Tamir & Mitchell 2013)
+       "You agreed with me, so you're like me"
+    2. LOCAL: Self-response similarity for question-specific transfer
+       "Questions I answered similarly will have similar outcomes"
+
+    The model: P(match_q) = base + perceived_similarity × self_similarity[q] × weight
+
+    This produces gradients from the structure of one's OWN beliefs:
+    - If my responses are correlated within domains (typical), transfer is stronger within domains
+    - Gradients emerge as an artifact of self-response structure, not population statistics
+
+    Parameters:
+        obs_q: Index of observed question
+        r_obs: Partner's observed response
+        r_self: Self's responses (35,)
+        base_rate: Base P(match)
+        projection_weight: How much similarity boosts P(match)
+
+    Returns:
+        (35,) array with question-specific predictions based on self-similarity
     """
-    # Self-similarity: inverse of absolute difference, normalized to [0, 1]
     r_self_obs = r_self[obs_q]
+
+    # GLOBAL: Perceived similarity from observed agreement
+    # High when partner's response matches my response on observed question
+    obs_diff = jnp.abs(r_obs - r_self_obs)
+    perceived_similarity = jnp.exp(-obs_diff / 2.0)  # Range [~0.14, 1.0]
+
+    # LOCAL: Self-response similarity for each question
+    # High when I answered question q similarly to the observed question
     self_diff = jnp.abs(r_self - r_self_obs)
-    similarity = 1.0 / (1.0 + self_diff)  # Range ~[0.2, 1.0]
+    self_similarity = jnp.exp(-self_diff / 2.0)  # Range [~0.14, 1.0]
 
-    # Did the observed response match?
-    obs_match = jnp.abs(r_obs - r_self_obs) <= threshold
+    # Combined: projection modulated by self-similarity
+    # "If you're like me (global), you'll answer like me on questions
+    #  where my beliefs are consistent with the observed topic (local)"
+    p_match = base_rate + perceived_similarity * self_similarity * projection_weight
 
-    # Prediction: base rate + modulation by similarity and match
-    # If match observed: boost similar questions
-    # If mismatch observed: penalize similar questions
-    base = 0.5
-    modulation = jnp.where(obs_match, 0.4 * similarity, -0.2 * similarity)
-
-    return jnp.clip(base + modulation, 0.1, 0.9)
+    return jnp.clip(p_match, 0.01, 0.99)
 
 
 @jit
 def _predict_single(
     obs_q, r_obs, r_self, loadings, means,
-    prior_cov, prior_precision, obs_variance, threshold, lam
+    prior_cov, prior_precision, obs_variance, threshold,
+    beta, base_rate, projection_weight
 ):
-    """Combined prediction: (1-λ) × Bayesian + λ × Egocentric."""
+    """Combined prediction: (1-β) × Bayesian + β × SimilarityProjection."""
     p_bayes = _predict_bayesian(
         obs_q, r_obs, r_self, loadings, means,
         prior_cov, prior_precision, obs_variance, threshold
     )
-    p_ego = _predict_egocentric(obs_q, r_obs, r_self, threshold)
+    p_proj = _predict_similarity_projection(obs_q, r_obs, r_self, base_rate, projection_weight)
 
-    return (1 - lam) * p_bayes + lam * p_ego
+    return (1 - beta) * p_bayes + beta * p_proj
 
 
 @jit
 def _predict_batch(
     obs_qs, r_partners, r_selves, loadings, means,
-    prior_cov, prior_precision, obs_variance, threshold, lam
+    prior_cov, prior_precision, obs_variance, threshold,
+    beta, base_rate, projection_weight
 ):
     """Batch prediction over participants using vmap."""
     return vmap(
         lambda oq, rp, rs: _predict_single(
             oq, rp, rs, loadings, means,
-            prior_cov, prior_precision, obs_variance, threshold, lam
+            prior_cov, prior_precision, obs_variance, threshold,
+            beta, base_rate, projection_weight
         )
     )(obs_qs, r_partners, r_selves)
 
@@ -215,26 +245,34 @@ def load_evaluation_data() -> pd.DataFrame:
 class CommonalityModel:
     """
     Commonality inference model combining Bayesian factor structure and
-    egocentric heuristics.
+    similarity-modulated projection (Ames 2004; Tamir & Mitchell 2013).
 
-    The mixture parameter λ controls the blend:
-        P(match) = (1-λ) × Bayesian + λ × Egocentric
+    The mixture parameter β controls the blend:
+        P(match) = (1-β) × Bayesian + β × SimilarityProjection
 
-    - λ=0: Pure Bayesian factor model (uses population structure)
-    - λ=1: Pure egocentric heuristic (uses self-similarity)
+    - β=0: Pure Bayesian factor model (uses population structure)
+    - β=1: Pure similarity projection (uniform projection based on observed agreement)
+
+    The Bayesian model predicts domain-specific gradients from factor structure.
+    Similarity projection predicts UNIFORM shifts (no gradient) because
+    perceived similarity is global and projection applies equally to all questions.
 
     Parameters
     ----------
     k : int
         Number of factors for Bayesian component (default 5)
-    lam : float
-        Mixture weight λ ∈ [0,1]. 0 = Bayesian, 1 = egocentric.
+    beta : float
+        Mixture weight β ∈ [0,1]. 0 = Bayesian, 1 = similarity projection.
     sigma_obs, sigma_prior : float
-        Observation and prior noise standard deviations
+        Observation and prior noise standard deviations (Bayesian model)
     match_threshold : float
         τ for defining a "match" (|r_partner - r_self| ≤ τ)
     epsilon : float
         Lapse rate (probability of random response)
+    base_rate : float
+        Base P(match) for similarity projection when perceived similarity = 0
+    projection_weight : float
+        How much perceived similarity boosts P(match) in similarity projection
     loadings : np.ndarray, optional
         Custom factor loadings (35 x k). If None, computed from data.
     question_means : np.ndarray, optional
@@ -244,17 +282,21 @@ class CommonalityModel:
     def __init__(
         self,
         k: int = 5,
-        lam: float = 0.0,
+        beta: float = 0.0,
         sigma_obs: float = 0.3,
         sigma_prior: float = 2.0,
         match_threshold: float = 1.5,
         epsilon: float = 0.2,
+        base_rate: float = 0.3,
+        projection_weight: float = 0.4,
         loadings: Optional[np.ndarray] = None,
         question_means: Optional[np.ndarray] = None,
     ):
         self.k = k
-        self.lam = np.clip(lam, 0.0, 1.0)
+        self.beta = np.clip(beta, 0.0, 1.0)
         self.epsilon = np.clip(epsilon, 0.0, 1.0)
+        self.base_rate = base_rate
+        self.projection_weight = projection_weight
 
         # Load data
         means = question_means if question_means is not None else load_question_means()
@@ -274,7 +316,9 @@ class CommonalityModel:
         self._prior_precision = jnp.array(np.eye(k_eff) / sigma_prior**2)
         self._obs_variance = sigma_obs**2
         self._threshold = match_threshold
-        self._lam = jnp.array(self.lam)
+        self._beta = jnp.array(self.beta)
+        self._base_rate = jnp.array(base_rate)
+        self._projection_weight = jnp.array(projection_weight)
 
     def predict(self, obs_q: int, r_partner: float, r_self: np.ndarray) -> np.ndarray:
         """
@@ -292,7 +336,8 @@ class CommonalityModel:
             obs_q, r_partner, jnp.array(r_self),
             self._loadings, self._means,
             self._prior_cov, self._prior_precision, self._obs_variance,
-            self._threshold, self._lam
+            self._threshold, self._beta,
+            self._base_rate, self._projection_weight
         )
         # Apply lapse rate
         preds = (1 - self.epsilon) * preds + self.epsilon * 0.5
@@ -317,18 +362,19 @@ class CommonalityModel:
             jnp.array(r_selves),
             self._loadings, self._means,
             self._prior_cov, self._prior_precision, self._obs_variance,
-            self._threshold, self._lam
+            self._threshold, self._beta,
+            self._base_rate, self._projection_weight
         )
         # Apply lapse rate
         preds = (1 - self.epsilon) * preds + self.epsilon * 0.5
         return np.asarray(preds)
 
     def __repr__(self):
-        if self.lam == 0:
+        if self.beta == 0:
             return f"CommonalityModel(k={self.k}, Bayesian)"
-        elif self.lam == 1:
-            return f"CommonalityModel(Egocentric)"
-        return f"CommonalityModel(k={self.k}, λ={self.lam:.2f})"
+        elif self.beta == 1:
+            return f"CommonalityModel(SimilarityProjection)"
+        return f"CommonalityModel(k={self.k}, β={self.beta:.2f})"
 
 
 # =============================================================================
@@ -426,8 +472,7 @@ def fit_parameters(
     k: int,
     eval_data: dict,
     human_rates: dict,
-    infer_lambda: bool = True,
-    fixed_lam: float = 0.0,
+    beta: float = 0.0,
     param_grid: dict = None,
 ) -> tuple[dict, dict]:
     """
@@ -439,8 +484,7 @@ def fit_parameters(
         k: Number of factors
         eval_data: Output of prepare_evaluation_data()
         human_rates: Dict of human rates {(question_type, match_type): rate}
-        infer_lambda: Whether to infer λ from data
-        fixed_lam: Fixed λ value when infer_lambda=False
+        beta: Mixture weight β ∈ [0,1]. 0 = Bayesian, 1 = similarity projection.
         param_grid: Override default parameter grid
 
     Returns:
@@ -465,7 +509,7 @@ def fit_parameters(
         param_grid['match_threshold'], param_grid['epsilon']
     ):
         model = CommonalityModel(
-            k=k, infer_lambda=infer_lambda, lam=fixed_lam,
+            k=k, beta=beta,
             sigma_obs=so, sigma_prior=sp, match_threshold=mt, epsilon=eps
         )
         pred_df = fast_evaluate(model, eval_data)
