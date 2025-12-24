@@ -289,6 +289,69 @@ for cat in ['observed', 'same_domain', 'different_domain']:
 print(f'\nPaper reports: observed 72.6%, same-domain 38.3%, different-domain 31.8%')
 ```
 
+### LLM Timecourse (Supplementary)
+
+```{python}
+#| fig-cap: "Supplementary: LLM prediction accuracy over conversation time"
+#| fig-width: 12
+#| fig-height: 5
+
+# Load timecourse accuracy data
+timecourse_df = pd.read_csv(base_dir / 'data' / 'llm_results' / 'chat_timecourse_accuracy.csv')
+
+# Aggregate by time_bin, match_type, question_category
+timecourse_agg = timecourse_df.groupby(
+    ['time_bin', 'bin_seconds', 'match_type', 'question_category']
+)['correct'].mean().reset_index()
+timecourse_agg['accuracy_pct'] = timecourse_agg['correct'] * 100
+
+fig, (ax_high, ax_low) = plt.subplots(1, 2, figsize=(12, 5), sharey=True)
+
+colors = {
+    'matched': '#2E86AB',
+    'same_domain': '#A23B72',
+    'different_domain': '#F18F01'
+}
+
+labels = {
+    'matched': 'Matched (discussed)',
+    'same_domain': 'Same Domain',
+    'different_domain': 'Different Domain'
+}
+
+for ax, match_type, title in [
+    (ax_high, 'high', 'High-Match Pairs'),
+    (ax_low, 'low', 'Low-Match Pairs')
+]:
+    subset_match = timecourse_agg[timecourse_agg['match_type'] == match_type]
+
+    for cat in ['matched', 'same_domain', 'different_domain']:
+        subset = subset_match[subset_match['question_category'] == cat]
+        if len(subset) > 0:
+            ax.plot(subset['bin_seconds'], subset['accuracy_pct'],
+                   marker='o', linewidth=2, markersize=5,
+                   color=colors[cat], label=labels[cat])
+
+    ax.set_xlabel('Conversation Time (seconds)')
+    ax.set_title(title, fontweight='bold')
+    ax.set_xlim(0, 195)
+    ax.set_ylim(15, 50)
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc='upper left', fontsize=9)
+
+ax_high.set_ylabel('LLM Prediction Accuracy (%)')
+
+plt.tight_layout()
+plt.savefig(base_dir / 'outputs' / 'figures' / 'llm_timecourse.pdf', dpi=300, bbox_inches='tight')
+plt.show()
+
+# Summary stats
+print('\nTimecourse summary (final time bin):')
+final_bin = timecourse_agg[timecourse_agg['time_bin'] == timecourse_agg['time_bin'].max()]
+for _, row in final_bin.iterrows():
+    print(f"  {row['match_type']} / {row['question_category']}: {row['accuracy_pct']:.1f}%")
+```
+
 ## 5. K-Sweep Analysis (Supplementary)
 
 Model performance as a function of factor dimensionality k.

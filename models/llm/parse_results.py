@@ -172,6 +172,131 @@ def summarize_accuracy(df: pd.DataFrame) -> dict:
     return summary
 
 
+def compute_chat_timecourse_accuracy(results: list) -> pd.DataFrame:
+    """Compute accuracy for chat timecourse results.
+
+    Args:
+        results: Parsed results from parse_raw_results
+
+    Returns:
+        DataFrame with accuracy by time_bin, match_type, question_category
+    """
+    # Load ground truth and metadata
+    timecourse = pd.read_csv(DATA_DIR / "15s-binned-complete-timecourse.csv")
+    questions = load_questions()
+
+    # Build group_id -> metadata map
+    group_meta = {}
+    for _, row in timecourse.drop_duplicates('group_id').iterrows():
+        group_meta[row['group_id']] = {
+            'cat_pid': row['cat_pid'],
+            'dog_pid': row['dog_pid'],
+            'match_type': row['match_type'],
+        }
+
+    # Load ground truth responses
+    unified = load_unified_data()
+    unified_chat = unified[unified['experiment'] == 'chat'].copy()
+
+    # Build pid -> question -> response map
+    ground_truth = {}
+    for _, row in unified_chat.iterrows():
+        pid = row['pid']
+        if pid not in ground_truth:
+            ground_truth[pid] = {}
+        ground_truth[pid][int(row['question'])] = int(row['own_response'])
+
+    # Get matched question info per participant
+    matched_info = {}
+    matched_rows = unified_chat[unified_chat['is_matched'] == True]
+    for _, row in matched_rows.iterrows():
+        mq = int(row['matched_question'])
+        matched_domain = row.get('matched_domain')
+        if pd.isna(matched_domain) and mq < len(questions):
+            matched_domain = questions.iloc[mq]['domain']
+        matched_info[row['pid']] = {
+            'matched_question': mq,
+            'matched_domain': matched_domain
+        }
+
+    records = []
+
+    for result in results:
+        custom_id = result['custom_id']
+        predictions = result['predictions']
+
+        # Parse custom_id: chat_{group_id}_t{time_bin}
+        parts = custom_id.split('_')
+        if len(parts) < 3 or not parts[0] == 'chat':
+            continue
+
+        group_id = parts[1]
+        time_bin = int(parts[2].replace('t', ''))
+
+        if group_id not in group_meta:
+            continue
+
+        meta = group_meta[group_id]
+        match_type = meta['match_type']
+
+        # Process predictions for both cat and dog
+        for author, pid_key in [('cat', 'cat_pid'), ('dog', 'dog_pid')]:
+            pid = meta[pid_key]
+            pred_key = f'{author}_predictions'
+
+            if pred_key not in predictions:
+                continue
+
+            if pid not in ground_truth or pid not in matched_info:
+                continue
+
+            matched_q = matched_info[pid]['matched_question']
+            matched_domain = matched_info[pid]['matched_domain']
+
+            author_preds = predictions[pred_key]
+
+            for q_str, probs in author_preds.items():
+                q_idx = int(q_str)
+
+                if q_idx not in ground_truth[pid]:
+                    continue
+
+                true_response = ground_truth[pid][q_idx]
+                prob_correct = float(probs.get(str(true_response), 0))
+
+                # Determine question category
+                q_domain = questions.iloc[q_idx]['domain'] if q_idx < len(questions) else None
+
+                if q_idx == matched_q:
+                    category = 'matched'
+                elif q_domain and matched_domain and q_domain.lower() == matched_domain.lower():
+                    category = 'same_domain'
+                else:
+                    category = 'different_domain'
+
+                # Compute if prediction is "correct" (argmax matches)
+                probs_list = [float(probs.get(str(i), 0)) for i in range(1, 6)]
+                predicted = probs_list.index(max(probs_list)) + 1
+                correct = predicted == true_response
+
+                records.append({
+                    'group_id': group_id,
+                    'time_bin': time_bin,
+                    'bin_seconds': time_bin * 15,
+                    'author': author,
+                    'pid': pid,
+                    'question': q_idx,
+                    'match_type': match_type,
+                    'question_category': category,
+                    'true_response': true_response,
+                    'predicted': predicted,
+                    'correct': correct,
+                    'prob_correct': prob_correct,
+                })
+
+    return pd.DataFrame(records)
+
+
 if __name__ == "__main__":
     # Parse nochat results
     nochat_file = RESULTS_DIR / "nochat_raw.jsonl"
