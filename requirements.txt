@@ -1,9 +1,13 @@
 # Python dependencies for paper analyses
 pandas>=2.0.0
 numpy>=1.24.0
+jax>=0.4.20
 polars>=0.20.0
 pyarrow>=14.0.0
 seaborn>=0.13.0
 matplotlib>=3.8.0
 scipy>=1.11.0
 statsmodels>=0.14.0
+
+# Testing
+pytest>=7.0.0
