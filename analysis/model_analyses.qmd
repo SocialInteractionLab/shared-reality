@@ -383,9 +383,9 @@ high_yerr = [[model_rates[(qt, 'high')] - rate_cis[(qt, 'high')][0] for qt in qt
              [rate_cis[(qt, 'high')][1] - model_rates[(qt, 'high')] for qt in qt_keys]]
 
 ax.bar(x - width/2, low_rates, width, color=COLOR_LOW, label='Low match',
-       yerr=low_yerr, capsize=3, error_kw={'linewidth': 1.2, 'capthick': 1.2})
+       yerr=low_yerr, capsize=0, error_kw={'linewidth': 1.5})
 ax.bar(x + width/2, high_rates, width, color=COLOR_HIGH, label='High match',
-       yerr=high_yerr, capsize=3, error_kw={'linewidth': 1.2, 'capthick': 1.2})
+       yerr=high_yerr, capsize=0, error_kw={'linewidth': 1.5})
 
 ax.set_xticks(x)
 ax.set_xticklabels(qt_labels)
@@ -501,7 +501,7 @@ yerr_lower = [g - ci[0] for g, ci in zip(gradients, cis)]
 yerr_upper = [ci[1] - g for g, ci in zip(gradients, cis)]
 
 ax.bar(range(len(gradients)), gradients, color=colors_c, yerr=[yerr_lower, yerr_upper],
-       capsize=4, error_kw={'linewidth': 1.5, 'capthick': 1.5})
+       capsize=0, error_kw={'linewidth': 1.5})
 ax.set_xticks(range(len(model_labels)))
 ax.set_xticklabels(model_labels, fontsize=10)
 ax.set_ylabel('Gradient (same − diff)', fontweight='bold')
