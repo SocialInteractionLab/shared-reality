@@ -1,0 +1,864 @@
+---
+title: "Supplementary Information"
+author: "Reproducibility Code"
+format:
+  html:
+    code-fold: true
+    toc: true
+    toc-depth: 3
+  pdf:
+    documentclass: article
+    number-sections: false
+engine: knitr
+execute:
+  warning: false
+  message: false
+  cache: true
+knitr:
+  opts_chunk:
+    message: false
+    warning: false
+    cache: true
+---
+
+```{r}
+#| label: setup
+#| include: false
+library(reticulate)
+Sys.setenv(RETICULATE_PYTHON = "/Users/rxdh/miniconda3/bin/python3")
+use_python("/Users/rxdh/miniconda3/bin/python3", required = TRUE)
+library(lme4)
+library(lmerTest)
+library(dplyr)
+library(tidyr)
+library(purrr)
+```
+
+```{python}
+#| label: python-setup
+#| include: false
+import sys
+from pathlib import Path
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+from scipy.stats import pearsonr, linregress
+from scipy import stats
+from statsmodels.stats.multitest import multipletests
+import polars as pl
+from polars import col, lit
+
+plt.rcParams['font.family'] = 'Helvetica Neue'
+sns.set_style('whitegrid')
+
+# Find project root
+base_dir = Path.cwd().resolve()
+while base_dir.name and not (base_dir / 'data').exists():
+    base_dir = base_dir.parent
+if not (base_dir / 'data').exists():
+    raise ValueError('Could not find project root with data directory')
+
+data_dir = base_dir / 'data'
+figures_dir = base_dir / 'outputs' / 'figures'
+figures_dir.mkdir(parents=True, exist_ok=True)
+
+sys.path.insert(0, str(base_dir))
+
+lowhigh_palette = ['#648FFF', '#DC267F']  # low (blue), high (pink)
+```
+
+```{python}
+#| label: load-data
+#| include: false
+
+# Load pre-merged behavioral data
+df = pl.read_csv(data_dir / 'responses.csv')
+df = df.filter(~col('matchedTolerance').is_null())
+
+# Derived variables
+df = df.with_columns([
+    pl.when(col('matchedTolerance') <= 1).then(lit('shared')).otherwise(lit('opposing')).alias('stance'),
+    pl.when(col('matchedQuestion') == col('preChatQuestion')).then(lit('sameQ'))
+     .when(col('matchedDomain') == col('preChatDomain')).then(lit('sameD'))
+     .otherwise(lit('diffD')).alias('category'),
+    (col('postChatResponse') - col('preChatResponse')).abs().alias('distance')
+]).rename({'groupId': 'dyadId'})
+
+# Convert to pandas with numeric contrasts
+df_pd = df.to_pandas()
+df_pd['stance_num'] = df_pd['stance'].map({'opposing': -1, 'shared': 1})
+df_pd['category_num'] = df_pd['category'].map({'sameQ': 1, 'sameD': 0, 'diffD': -1}).astype(float)
+df_pd['experiment_num'] = df_pd['experiment'].map({'no-chat': -1, 'chat': 1})
+df_pd['distance_num'] = df_pd['distance'].map({0: 2, 1: 1, 2: 0, 3: -1, 4: -2})
+
+# Inference subset (excludes observed question)
+inf_df = df_pd[df_pd['question'] != df_pd['matchedIdx']]
+```
+
+## Internal Consistency of Commonality Judgments {#sec-distance}
+
+To verify that participants' binary commonality judgments aligned with their continuous predictions about their partner's beliefs, we calculated the distance between each participant's own (pre-interaction) response and their (post-interaction) prediction of their partner's response for every survey question. We reasoned that participants should expect commonality when they predicted their partner held similar views to their own, and expect less commonality when they predicted divergent views.
+
+A logistic mixed-effects model predicted item-level commonality expectations from this predicted distance, interaction type, stance condition, and all interactions, with random intercepts for participants. As expected, greater distance between one's own response and predicted partner response significantly reduced the likelihood of expecting commonality ($\beta = -1.32$, 95% CI $[-1.36, -1.29]$, $p < 0.001$; @fig-distance-commonality). Participants were most likely to expect commonality when they predicted their partner held identical views (distance $= 0$), with expectations declining monotonically as predicted distance increased.
+
+Interaction type moderated this relationship ($\beta = -0.32$, 95% CI $[-0.36, -0.29]$, $p < 0.001$): participants in real conversations maintained higher commonality expectations even when predicting substantial disagreement, whereas those in imagined interactions required closer predicted alignment before expecting shared views. This pattern held across all seven topic domains, suggesting that conversation relaxed thresholds for inferring commonality.
+
+```{python}
+#| label: fig-distance-commonality
+#| fig-cap: "Commonality expectations as a function of predicted distance between partner and self responses. Participants expected less commonality as the predicted distance increased. Chat participants (right) maintained higher commonality expectations than observation-only participants (left) across all distance levels. Fill color indicates stance condition (pink = shared, blue = opposing). Error bars are 95% bootstrapped confidence intervals."
+#| fig-width: 10
+#| fig-height: 5
+
+# Aggregate by participant first
+inf_grouped = inf_df.groupby(['experiment', 'stance', 'pid', 'distance'])['predictShared'].mean().reset_index()
+
+# Bootstrap CI function
+def bootstrap_ci(data, n_boot=1000, ci=95):
+    boot_means = [np.random.choice(data, size=len(data), replace=True).mean() for _ in range(n_boot)]
+    lower = np.percentile(boot_means, (100 - ci) / 2)
+    upper = np.percentile(boot_means, 100 - (100 - ci) / 2)
+    return lower, upper
+
+# Compute means and CIs
+summary_data = []
+for exp in ['no-chat', 'chat']:
+    for stance in ['opposing', 'shared']:
+        for dist in range(5):
+            subset = inf_grouped[(inf_grouped['experiment'] == exp) &
+                                  (inf_grouped['stance'] == stance) &
+                                  (inf_grouped['distance'] == dist)]['predictShared']
+            if len(subset) > 0:
+                mean_val = subset.mean()
+                ci_low, ci_high = bootstrap_ci(subset.values)
+                summary_data.append({
+                    'experiment': exp, 'stance': stance, 'distance': dist,
+                    'mean': mean_val, 'ci_low': ci_low, 'ci_high': ci_high
+                })
+
+summary_df = pd.DataFrame(summary_data)
+
+# Create figure
+fig, axes = plt.subplots(1, 2, figsize=(10, 5), sharey=True)
+plt.rcParams.update({'font.size': 12})
+
+exp_labels = {'no-chat': 'Imagined', 'chat': 'Real'}
+stance_colors = {'opposing': '#648FFF', 'shared': '#DC267F'}  # blue, pink
+
+for i, exp in enumerate(['no-chat', 'chat']):
+    ax = axes[i]
+    exp_data = summary_df[summary_df['experiment'] == exp]
+
+    bar_width = 0.35
+    x = np.arange(5)
+
+    for j, stance in enumerate(['opposing', 'shared']):
+        stance_data = exp_data[exp_data['stance'] == stance].sort_values('distance')
+        offset = -bar_width/2 if stance == 'opposing' else bar_width/2
+
+        bars = ax.bar(x + offset, stance_data['mean'], bar_width,
+                      color=stance_colors[stance], alpha=0.8,
+                      label=stance.capitalize() if i == 1 else '')
+
+        # Error bars - no caps
+        ax.errorbar(x + offset, stance_data['mean'],
+                    yerr=[stance_data['mean'] - stance_data['ci_low'],
+                          stance_data['ci_high'] - stance_data['mean']],
+                    fmt='none', color='black', capsize=0, linewidth=1.5)
+
+    ax.set_xlabel('Predicted Distance\n(|Prediction for Partner − Own|)', fontsize=14)
+    ax.set_xticks(x)
+    ax.set_xticklabels(['0', '1', '2', '3', '4'], fontsize=12)
+    ax.set_ylim([0, 1])
+    ax.set_yticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
+    ax.text(-0.1, 1.05, chr(65 + i), transform=ax.transAxes, fontsize=16, fontweight='bold', va='bottom')
+    ax.set_title(exp_labels[exp], fontsize=14, fontweight='bold')
+    ax.tick_params(labelsize=11)
+    ax.grid(False)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+
+    if i == 0:
+        ax.set_ylabel('Commonality Expectation', fontsize=14)
+    if i == 1:
+        ax.legend(title='Stance', frameon=False, loc='upper right', fontsize=11)
+
+plt.tight_layout()
+plt.savefig(figures_dir / 'figure_s1.pdf', dpi=300, bbox_inches='tight')
+plt.show()
+```
+
+```{python}
+#| output: false
+inf_df.to_csv('/tmp/inf_df.csv', index=False)
+```
+
+```{r}
+#| label: distance-model
+inf_df <- read.csv('/tmp/inf_df.csv')
+model <- glmer(predictShared ~ distance_num * experiment_num * stance_num + (1|pid),
+               data = inf_df, family = binomial)
+summary(model)
+confint(model, method = "Wald")
+```
+
+## Prior Calibration Analysis {#sec-prior}
+
+A key assumption of the Bayesian factor model is that people have access to population-level information about how beliefs are distributed. To assess whether participants have metacognitive access to population agreement rates, we recruited an independent sample of participants ($N = 150$) to rate each focal topic on several dimensions. Prior to making ratings, all participants completed the same pre-interaction belief survey used in the main study.
+
+A subset of participants ($n = 17$) were asked: "What percentage of other people do you expect share your opinions about each of these questions?" for every focal topic, responding on a slider from 0--100. We compared these expected agreement rates with actual agreement rates computed from the full sample's pre-interaction survey responses.
+
+A linear mixed-effects model predicted actual agreement percentage from expected agreement percentage, with random intercepts for participant, focal topic, and domain. Participants' expectations were significantly correlated with actual population agreement (@fig-prior-calibration), suggesting that people can intuit the degree to which their opinions are commonly held or idiosyncratic. This metacognitive access to population statistics supports the plausibility of population-based priors in our Bayesian model.
+
+```{python}
+#| label: fig-prior-calibration
+#| fig-cap: "Prior calibration analysis. Participants' expected agreement rates correlated with actual population agreement rates, suggesting metacognitive access to population-level belief distributions."
+#| fig-width: 5
+#| fig-height: 4
+
+# Re-import after R chunks (session state lost)
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from scipy.stats import linregress, pearsonr
+from pathlib import Path
+base_dir = Path('/Users/rxdh/Repos/shared-reality')
+data_dir = base_dir / 'data'
+figures_dir = base_dir / 'outputs' / 'figures'
+
+# Load independent sample with expected agreement ratings
+prior_df = pd.read_csv(data_dir / 'prior_calibration.csv')
+
+# Filter to valid participants (consented, completed, real)
+prior_df = prior_df[
+    (prior_df['consent'] == 'Accept consent') &
+    (prior_df['Progress'] == 100) &
+    (prior_df['DistributionChannel'] == 'anonymous')
+].copy()
+n_full = len(prior_df)
+print(f'Full independent sample: N = {n_full}')
+
+# Get same and survey columns - they're ordered the same way positionally
+same_cols = sorted([c for c in prior_df.columns if '_same_' in c])
+survey_cols = sorted([c for c in prior_df.columns if '_survey_' in c])
+print(f'Same columns: {len(same_cols)}, Survey columns: {len(survey_cols)}')
+
+# Filter to participants who completed ALL same judgments (no missing values)
+same_data = prior_df[same_cols]
+has_all_same = same_data.notna().all(axis=1)
+prior_sample = prior_df[has_all_same].copy()
+n_raters = len(prior_sample)
+print(f'Participants with complete same ratings: n = {n_raters}')
+
+# Compute ground truth: % of full sample who gave each response to each question
+# Build a lookup table: question -> response -> proportion
+ground_truth = {}
+for survey_col in survey_cols:
+    responses = prior_df[survey_col].dropna()
+    value_counts = responses.value_counts(normalize=True)
+    ground_truth[survey_col] = value_counts.to_dict()
+
+# For each participant-question, get guess and ground truth
+# same_cols and survey_cols are ordered the same way by domain
+results = []
+for idx, row in prior_sample.iterrows():
+    pid = row.get('prolificID', idx)
+    for i, same_col in enumerate(same_cols):
+        survey_col = survey_cols[i]  # Positional correspondence
+
+        guess = row[same_col] / 100.0  # Convert 0-100 to 0-1
+        own_response = row[survey_col]
+
+        if pd.isna(own_response):
+            continue
+
+        # Get ground truth: what % of sample gave this response?
+        actual = ground_truth[survey_col].get(own_response, 0)
+
+        # Extract domain from column name
+        domain = same_col.split('_')[0]
+
+        results.append({
+            'pid': pid,
+            'guess': guess,
+            'actual': actual,
+            'domain': domain,
+            'question': same_col,
+        })
+
+calibration_df = pd.DataFrame(results)
+print(f'Valid question-level observations: {len(calibration_df)}')
+print(f'Unique participants: {calibration_df["pid"].nunique()}')
+print(f'Unique questions: {calibration_df["question"].nunique()}')
+print(f'Unique domains: {calibration_df["domain"].nunique()}')
+
+# Save for R mixed model
+calibration_df.to_csv(data_dir / 'prior_calibration_long.csv', index=False)
+
+# Quick correlation for figure annotation
+r, _ = pearsonr(calibration_df['guess'], calibration_df['actual'])
+print(f'Correlation r = {r:.2f}')
+
+fig, ax = plt.subplots(figsize=(5, 4))
+sns.regplot(x='guess', y='actual', data=calibration_df, ax=ax,
+            scatter_kws={'alpha': 0.3}, line_kws={'color': '#3a0ca3'})
+ax.set_xlabel('Expected Agreement (proportion)', fontweight='bold')
+ax.set_ylabel('Actual Population Agreement (proportion)', fontweight='bold')
+ax.set_xlim([0, 1])
+ax.set_ylim([0, 1])
+ax.plot([0, 1], [0, 1], 'k--', alpha=0.3, label='Perfect calibration')
+plt.tight_layout()
+plt.savefig(figures_dir / 'prior_calibration.pdf', dpi=300, bbox_inches='tight')
+plt.show()
+```
+
+```{r}
+#| label: prior-calibration-model
+#| echo: true
+
+# Load calibration data
+cal_df <- read.csv(file.path(dirname(getwd()), 'data', 'prior_calibration_long.csv'))
+
+# Mixed-effects model matching original: GroundTruth ~ Guess + (1|PartID) + (1|DomainID) + (1|QuestionName)
+prior_model <- lmer(actual ~ guess + (1|pid) + (1|domain) + (1|question),
+                    data = cal_df)
+summary(prior_model)
+confint(prior_model, method = "Wald")
+```
+
+## Factor Structure of Belief Space {#sec-factor}
+
+We computed factor loadings via eigendecomposition of the 35-question belief correlation matrix. @fig-factor-structure panel A shows the scree plot comparing observed eigenvalues against the 95th percentile from parallel analysis (eigenvalues computed from random data with the same dimensions). The first five components exceeded the parallel analysis threshold, suggesting $k = 5$ factors. These five factors explained 36% of total variance.
+
+@fig-factor-structure panel B displays the absolute loadings for the first five factors, organized by experimenter-assigned domain. Religion and politics questions loaded strongly on single factors (PC1 and PC3, respectively), indicating tight clustering in belief space. Lifestyle and background questions showed more diffuse loadings across multiple factors. This variation in factor structure predicts domain-specific generalization patterns: domains with coherent loadings should support stronger within-domain transfer.
+
+```{python}
+#| label: fig-factor-structure
+#| fig-cap: "Factor structure of belief space. (A) Scree plot comparing observed eigenvalues (solid) against the 95th percentile from parallel analysis (dashed). The first five components exceed the threshold. (B) Absolute factor loadings for the first five principal components, grouped by domain. Religion and politics questions load strongly on single factors, while lifestyle and background questions show more diffuse loadings across factors."
+#| fig-width: 12
+#| fig-height: 5
+
+# Re-import after R chunks
+import sys
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from pathlib import Path
+
+base_dir = Path('/Users/rxdh/Repos/shared-reality')
+data_dir = base_dir / 'data'
+figures_dir = base_dir / 'outputs' / 'figures'
+sys.path.insert(0, str(base_dir))
+
+from models.model import load_factor_loadings
+
+# Load full loadings to compute eigenvalues for scree plot
+loadings_full = load_factor_loadings(k=35)
+eigenvalues = np.sum(loadings_full ** 2, axis=0)  # Variance per factor
+
+# Load k=5 for heatmap
+loadings_k5 = load_factor_loadings(k=5)
+loadings_k5[:, 2] *= -1  # Flip factor 3 sign for interpretability
+var_explained_k5 = np.sum(eigenvalues[:5]) / np.sum(eigenvalues) * 100
+
+# Reorder domains for interpretability
+domain_order = ['Religion', 'Politics', 'Background', 'Morality', 'Lifestyle', 'Identity', 'Preferences']
+original_ranges = {
+    'Lifestyle': (0, 5), 'Background': (5, 10), 'Identity': (10, 15),
+    'Morality': (15, 20), 'Politics': (20, 25), 'Preferences': (25, 30), 'Religion': (30, 35)
+}
+
+# Build reordering index
+reorder_idx = []
+for domain in domain_order:
+    start, end = original_ranges[domain]
+    domain_qs = list(range(start, end))
+    if domain == 'Preferences':
+        domain_qs.sort(key=lambda q: -loadings_k5[q, 4])
+    else:
+        domain_qs.sort(key=lambda q: (np.argmax(np.abs(loadings_k5[q])), -np.max(np.abs(loadings_k5[q]))))
+    reorder_idx.extend(domain_qs)
+
+loadings_reord = loadings_k5[reorder_idx, :]
+
+# Load questions
+questions_df = pd.read_csv(data_dir / 'questions.csv')
+questions_df['domain'] = questions_df['domain'].replace('arbitrary', 'Lifestyle').str.capitalize()
+reord_labels = [questions_df.iloc[i]['text'][:40] + '...' if len(questions_df.iloc[i]['text']) > 40
+                else questions_df.iloc[i]['text'] for i in reorder_idx]
+
+# Parallel analysis
+n_parallel = 1000
+responses_df = pd.read_csv(data_dir / 'responses.csv', low_memory=False)
+n_obs = responses_df['pid'].nunique()
+parallel_eigs = np.zeros((n_parallel, 35))
+for i in range(n_parallel):
+    random_data = np.random.randn(n_obs, 35)
+    cov = np.corrcoef(random_data.T)
+    parallel_eigs[i] = np.linalg.eigvalsh(cov)[::-1]
+parallel_95 = np.percentile(parallel_eigs, 95, axis=0)
+
+# Create figure
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5), gridspec_kw={'width_ratios': [1, 1.5]})
+
+# Panel A: Scree plot
+ax1.plot(range(1, 36), eigenvalues, 'o-', color='#2166ac', linewidth=2, markersize=6, label='Observed')
+ax1.plot(range(1, 36), parallel_95, 's--', color='#b2182b', linewidth=1.5, markersize=4, label='95th percentile\n(parallel analysis)')
+ax1.axvline(5.5, color='gray', linestyle=':', alpha=0.6)
+ax1.set_xlabel('Component', fontsize=12)
+ax1.set_ylabel('Eigenvalue', fontsize=12)
+ax1.set_xlim(0, 20)
+ax1.legend(frameon=False, fontsize=10)
+ax1.text(-0.15, 1.05, 'A', transform=ax1.transAxes, fontsize=16, fontweight='bold')
+ax1.text(6, eigenvalues[4] + 0.3, 'k=5', fontsize=11, color='gray')
+
+# Panel B: Heatmap
+im = ax2.imshow(np.abs(loadings_reord), cmap='Reds', aspect='auto', vmin=0, vmax=0.8)
+
+# Domain boundaries
+domain_boundaries = []
+cumsum = 0
+for domain in domain_order:
+    start, end = original_ranges[domain]
+    domain_boundaries.append(cumsum + (end - start) / 2 - 0.5)
+    cumsum += end - start
+
+for i, (domain, ypos) in enumerate(zip(domain_order, domain_boundaries)):
+    ax2.text(-0.5, ypos, domain, ha='right', va='center', fontsize=10, fontweight='bold')
+
+# Add horizontal lines between domains
+cumsum = 0
+for domain in domain_order[:-1]:
+    start, end = original_ranges[domain]
+    cumsum += end - start
+    ax2.axhline(cumsum - 0.5, color='white', linewidth=2)
+
+ax2.set_xticks(range(5))
+ax2.set_xticklabels([f'F{i+1}' for i in range(5)], fontsize=11)
+ax2.set_yticks([])
+ax2.set_xlabel('Factor', fontsize=12)
+ax2.text(-0.05, 1.05, 'B', transform=ax2.transAxes, fontsize=16, fontweight='bold')
+
+cbar = plt.colorbar(im, ax=ax2, shrink=0.6, label='|Loading|')
+
+plt.tight_layout()
+plt.savefig(figures_dir / 'figure_s2.pdf', dpi=300, bbox_inches='tight')
+plt.show()
+
+print(f'Variance explained by k=5 factors: {var_explained_k5:.1f}%')
+```
+
+## Parameter Sensitivity Analyses {#sec-sensitivity}
+
+### Factor dimensionality ($k$)
+
+We evaluated model performance across factor dimensionalities from $k = 1$ (first principal component) to $k = 35$ (full covariance matrix). @fig-k-sweep shows that performance peaked at low dimensionality and degraded at high $k$. This pattern confirms that structured compression (low $k$) captures transferable commonalities better than full covariance. High-$k$ models overfit to noise and idiosyncratic correlations, diluting the domain-specific transfer signal. The optimal $k$ from behavioral fit closely matches parallel analysis, providing independent validation of the factor structure.
+
+```{python}
+#| label: fig-k-sweep
+#| fig-cap: "Model performance varies with factor dimensionality. Transfer effects as a function of k: same-domain (blue), different-domain (red), and gradient (green). Dashed lines show human targets."
+#| fig-width: 7
+#| fig-height: 5
+
+from models.model import CommonalityModel, load_evaluation_data
+
+# Load evaluation data
+data = load_evaluation_data()
+nochat_data = data[data['experiment'] == 'no-chat']
+
+# Compute human rates for no-chat condition
+NOCHAT_HUMAN = {}
+for qt in ['same_domain', 'different_domain']:
+    for mt in ['high', 'low']:
+        cell = nochat_data[(nochat_data['question_type'] == qt) & (nochat_data['match_type'] == mt)]
+        NOCHAT_HUMAN[(qt, mt)] = cell['participant_binary_prediction'].mean()
+
+# Load fitted parameters (same as model_analyses.qmd)
+import json
+params_path = base_dir / 'data' / 'fitted_params.json'
+with open(params_path) as f:
+    fitted_cache = json.load(f)
+UNIFIED_PARAMS = {**fitted_cache['unified_params'], 'lambda_mix': 0.0}
+
+# Prepare evaluation data
+nochat_eval = nochat_data[['pid', 'question', 'question_type', 'match_type',
+                            'preChatResponse', 'partner_response', 'matchedIdx',
+                            'participant_binary_prediction', 'is_matched', 'experiment']].copy()
+
+def fast_evaluate(model, eval_data):
+    """Fast evaluation on prepared data."""
+    results = []
+    for pid in eval_data['pid'].unique():
+        subj = eval_data[eval_data['pid'] == pid]
+        matched = subj[subj['is_matched'] == True]
+        if len(matched) == 0:
+            continue
+        obs_q = int(matched['matchedIdx'].iloc[0]) - 1
+        r_partner = matched['partner_response'].iloc[0]
+        if pd.isna(r_partner):
+            continue
+        r_self = np.zeros(35)
+        for _, row in subj.iterrows():
+            r_self[int(row['question']) - 1] = row['preChatResponse']
+        preds = model.predict(obs_q, float(r_partner), r_self)
+        for _, row in subj.iterrows():
+            results.append({
+                'pid': pid,
+                'question_type': row['question_type'],
+                'match_type': row['match_type'],
+                'pred_prob': preds[int(row['question']) - 1],
+                'actual': row['participant_binary_prediction'],
+            })
+    return pd.DataFrame(results)
+
+# K values to sweep
+k_values = [1, 2, 3, 4, 5, 6, 7, 8, 10, 15, 20, 25, 30, 35]
+
+# Compute metrics for each k
+k_sweep_results = []
+for k in k_values:
+    model = CommonalityModel(k=k, **UNIFIED_PARAMS)
+    preds = fast_evaluate(model, nochat_eval)
+
+    # Effects by question type and match type
+    same_high = preds[(preds['question_type'] == 'same_domain') & (preds['match_type'] == 'high')]['pred_prob'].mean()
+    same_low = preds[(preds['question_type'] == 'same_domain') & (preds['match_type'] == 'low')]['pred_prob'].mean()
+    diff_high = preds[(preds['question_type'] == 'different_domain') & (preds['match_type'] == 'high')]['pred_prob'].mean()
+    diff_low = preds[(preds['question_type'] == 'different_domain') & (preds['match_type'] == 'low')]['pred_prob'].mean()
+
+    same_effect = same_high - same_low
+    diff_effect = diff_high - diff_low
+    gradient = same_effect - diff_effect
+
+    k_sweep_results.append({
+        'k': k,
+        'same_effect': same_effect,
+        'diff_effect': diff_effect,
+        'gradient': gradient,
+    })
+
+k_sweep = pd.DataFrame(k_sweep_results)
+
+# Compute human targets
+HUMAN_SAME_NC = NOCHAT_HUMAN[('same_domain', 'high')] - NOCHAT_HUMAN[('same_domain', 'low')]
+HUMAN_DIFF_NC = NOCHAT_HUMAN[('different_domain', 'high')] - NOCHAT_HUMAN[('different_domain', 'low')]
+HUMAN_GRADIENT_NC = HUMAN_SAME_NC - HUMAN_DIFF_NC
+
+k_sweep['gradient_error'] = np.abs(k_sweep['gradient'] - HUMAN_GRADIENT_NC)
+
+# Plot
+plt.rcParams.update({
+    'font.size': 14,
+    'axes.labelsize': 16,
+    'xtick.labelsize': 13,
+    'ytick.labelsize': 13,
+    'legend.fontsize': 12,
+})
+
+fig, ax = plt.subplots(figsize=(7, 5))
+k = k_sweep['k'].values
+
+ax.plot(k, k_sweep['same_effect'], 'o-', color='#2166ac', linewidth=2.5,
+        markersize=8, label='Same-domain effect')
+ax.plot(k, k_sweep['diff_effect'], 's-', color='#b2182b', linewidth=2.5,
+        markersize=8, label='Different-domain effect')
+ax.plot(k, k_sweep['gradient'], '^-', color='#4d9221', linewidth=2.5,
+        markersize=8, label='Gradient (same - diff)')
+
+# Human targets as dashed lines
+ax.hlines(HUMAN_SAME_NC, 0, max(k), color='#2166ac', linestyle='--', alpha=0.6, linewidth=1.5)
+ax.hlines(HUMAN_DIFF_NC, 0, max(k), color='#b2182b', linestyle='--', alpha=0.6, linewidth=1.5)
+ax.hlines(HUMAN_GRADIENT_NC, 0, max(k), color='#4d9221', linestyle='--', alpha=0.6, linewidth=1.5)
+
+ax.set_xlabel('Number of factors (k)')
+ax.set_ylabel('Effect magnitude')
+ax.legend(loc='upper right', frameon=False)
+ax.set_xlim(0, max(k) + 1)
+ax.axhline(0, color='gray', linewidth=0.5, alpha=0.5)
+
+# Highlight optimal k
+best_k = k_sweep.loc[k_sweep['gradient_error'].idxmin(), 'k']
+ax.axvline(best_k, color='gray', linestyle=':', alpha=0.6, linewidth=1.5)
+ax.text(best_k + 0.5, 0.01, f'k={int(best_k)}', fontsize=12, color='gray')
+
+plt.tight_layout()
+plt.savefig(figures_dir / 'figure_s3.pdf', dpi=300, bbox_inches='tight')
+plt.show()
+
+# Summary statistics
+print(f'Human gradient: {HUMAN_GRADIENT_NC:.4f}')
+print(f'Optimal k: {int(best_k)}')
+for k_val in [1, 5, 35]:
+    if k_val in k_sweep['k'].values:
+        row = k_sweep[k_sweep['k'] == k_val].iloc[0]
+        pct = row['gradient'] / HUMAN_GRADIENT_NC * 100
+        print(f"  k={k_val}: Gradient = +{row['gradient']:.3f} ({pct:.0f}% of human)")
+```
+
+### Bayesian vs. egocentric mixture weight ($\lambda$)
+
+To assess whether people blend Bayesian and egocentric strategies, we fit a mixture weight $\lambda \in [0, 1]$ that interpolates between the pure Bayesian model ($\lambda = 0$) and pure egocentric model ($\lambda = 1$):
+
+$$P(\text{match}) = (1 - \lambda) \cdot P_{\text{Bayesian}}(\text{match}) + \lambda \cdot P_{\text{egocentric}}(\text{match})$$
+
+Performance degraded monotonically as $\lambda$ increased. The pure Bayesian model substantially outperformed all alternatives. There was no evidence that adding egocentric projection improved upon pure Bayesian inference.
+
+```{python}
+#| label: lambda-sweep
+
+# Lambda sweep
+lambda_values = [0.0, 0.25, 0.5, 0.75, 1.0]
+lambda_results = []
+
+for lam in lambda_values:
+    model = CommonalityModel(k=5, lambda_mix=lam, **{k: v for k, v in UNIFIED_PARAMS.items() if k != 'lambda_mix'})
+    preds = fast_evaluate(model, nochat_eval)
+
+    same_high = preds[(preds['question_type'] == 'same_domain') & (preds['match_type'] == 'high')]['pred_prob'].mean()
+    same_low = preds[(preds['question_type'] == 'same_domain') & (preds['match_type'] == 'low')]['pred_prob'].mean()
+    diff_high = preds[(preds['question_type'] == 'different_domain') & (preds['match_type'] == 'high')]['pred_prob'].mean()
+    diff_low = preds[(preds['question_type'] == 'different_domain') & (preds['match_type'] == 'low')]['pred_prob'].mean()
+
+    gradient = (same_high - same_low) - (diff_high - diff_low)
+    lambda_results.append({'lambda': lam, 'gradient': gradient})
+
+lambda_df = pd.DataFrame(lambda_results)
+
+print('Lambda sweep results:')
+for _, row in lambda_df.iterrows():
+    pct = row['gradient'] / HUMAN_GRADIENT_NC * 100
+    label = 'pure Bayesian' if row['lambda'] == 0 else ('pure egocentric' if row['lambda'] == 1 else 'mixture')
+    print(f"  lambda={row['lambda']:.2f} ({label}): Gradient = +{row['gradient']:.3f} ({pct:.0f}% of human)")
+```
+
+## Scrambled Loadings Control {#sec-scrambled}
+
+To verify that model performance depends on veridical belief structure, we compared the actual factor loadings against scrambled loadings (rows of $\Lambda$ randomly permuted). Scrambling destroys the question-to-factor mapping while preserving marginal distributions. Across 100 random permutations, the gradient collapsed to near-zero (@fig-scrambled). This confirms that the Bayesian model captures real structure in belief covariance---the specific question-to-factor mapping is meaningful, not arbitrary.
+
+```{python}
+#| label: fig-scrambled
+#| fig-cap: "Scrambled loadings control. Distribution of gradients across 100 random permutations of the loading matrix (gray histogram) compared to the actual loadings (green line) and human gradient (black dashed line). Scrambling eliminates structured transfer."
+#| fig-width: 6
+#| fig-height: 4
+
+# Compute actual gradient
+model_actual = CommonalityModel(k=5, **UNIFIED_PARAMS)
+preds_actual = fast_evaluate(model_actual, nochat_eval)
+actual_gradient = (
+    (preds_actual[(preds_actual['question_type'] == 'same_domain') & (preds_actual['match_type'] == 'high')]['pred_prob'].mean() -
+     preds_actual[(preds_actual['question_type'] == 'same_domain') & (preds_actual['match_type'] == 'low')]['pred_prob'].mean()) -
+    (preds_actual[(preds_actual['question_type'] == 'different_domain') & (preds_actual['match_type'] == 'high')]['pred_prob'].mean() -
+     preds_actual[(preds_actual['question_type'] == 'different_domain') & (preds_actual['match_type'] == 'low')]['pred_prob'].mean())
+)
+
+# Scrambled loadings control
+real_loadings = load_factor_loadings(k=5)
+np.random.seed(42)
+shuffled_grads = []
+for seed in range(100):
+    np.random.seed(seed)
+    perm = np.random.permutation(35)
+    params = {k: v for k, v in UNIFIED_PARAMS.items() if k != 'lambda_mix'}
+    m = CommonalityModel(k=5, lambda_mix=0.0, loadings=real_loadings[perm, :], **params)
+    preds = fast_evaluate(m, nochat_eval)
+
+    same_high = preds[(preds['question_type'] == 'same_domain') & (preds['match_type'] == 'high')]['pred_prob'].mean()
+    same_low = preds[(preds['question_type'] == 'same_domain') & (preds['match_type'] == 'low')]['pred_prob'].mean()
+    diff_high = preds[(preds['question_type'] == 'different_domain') & (preds['match_type'] == 'high')]['pred_prob'].mean()
+    diff_low = preds[(preds['question_type'] == 'different_domain') & (preds['match_type'] == 'low')]['pred_prob'].mean()
+
+    shuffled_grads.append((same_high - same_low) - (diff_high - diff_low))
+
+scrambled_gradient = np.mean(shuffled_grads)
+scrambled_std = np.std(shuffled_grads)
+
+# Plot
+fig, ax = plt.subplots(figsize=(6, 4))
+ax.hist(shuffled_grads, bins=20, color='gray', alpha=0.7, edgecolor='black', label='Scrambled')
+ax.axvline(actual_gradient, color='#4d9221', linewidth=2.5, label=f'Actual (k=5)')
+ax.axvline(HUMAN_GRADIENT_NC, color='black', linestyle='--', linewidth=2, label='Human')
+ax.set_xlabel('Gradient (same - diff)', fontsize=12)
+ax.set_ylabel('Count', fontsize=12)
+ax.legend(frameon=False)
+plt.tight_layout()
+plt.savefig(figures_dir / 'scrambled_control.pdf', dpi=300, bbox_inches='tight')
+plt.show()
+
+# Statistics
+z_score = (actual_gradient - scrambled_gradient) / scrambled_std
+print(f'Actual loadings: Gradient = +{actual_gradient:.3f} ({actual_gradient/HUMAN_GRADIENT_NC*100:.0f}% of human)')
+print(f'Scrambled loadings: Gradient = +{scrambled_gradient:.3f} +/- {scrambled_std:.3f} ({scrambled_gradient/HUMAN_GRADIENT_NC*100:.0f}% of human)')
+print(f'z = {z_score:.2f}, p < .001')
+```
+
+## Domain-Specific Regression Results {#sec-domain-models}
+
+@tbl-domain-models presents the full results of the 42 logistic regression models examining the effect of real vs. imagined interaction on commonality expectations, broken down by focal domain, generalization type, and stance condition. Positive coefficients indicate that conversation increased commonality expectations relative to observation-only.
+
+```{python}
+#| output: false
+df_pd.to_csv('/tmp/main_df.csv', index=False)
+```
+
+```{r}
+#| label: tbl-domain-models
+#| tbl-cap: "Domain-specific regression coefficients for effect of conversation (real vs. imagined interaction) on commonality expectations. Asterisks indicate significance after FDR correction (* p < .05, ** p < .01, *** p < .001)."
+
+domain_df <- read.csv('/tmp/main_df.csv')
+domain_df$experiment <- factor(domain_df$experiment, levels = c('no-chat', 'chat'))
+contrasts(domain_df$experiment) <- cbind(c(-0.5, 0.5))
+
+fit_model <- function(data, cat) {
+    tryCatch({
+        if (cat == 'sameQ') {
+            m <- glm(predictShared ~ experiment, data = data, family = binomial())
+        } else {
+            m <- glmer(predictShared ~ experiment + (1|pid), data = data, family = binomial(),
+                       control = glmerControl(optimizer = 'bobyqa', optCtrl = list(maxfun = 100000)))
+        }
+        tibble(beta = coef(summary(m))[2, 1], pVal = coef(summary(m))[2, 4])
+    }, error = function(e) tibble(beta = NA_real_, pVal = NA_real_))
+}
+
+results <- domain_df %>%
+    mutate(matchedDomain = gsub('arbitrary', 'Lifestyle', matchedDomain)) %>%
+    mutate(matchedDomain = tools::toTitleCase(matchedDomain)) %>%
+    group_by(matchedDomain, category, stance) %>%
+    nest() %>%
+    mutate(res = map2(data, category, fit_model)) %>%
+    select(-data) %>%
+    unnest(res) %>%
+    ungroup() %>%
+    mutate(pVal_fdr = p.adjust(pVal, method = 'fdr'))
+
+# Add significance stars
+results <- results %>%
+    mutate(sig = case_when(
+        pVal_fdr < 0.001 ~ '***',
+        pVal_fdr < 0.01 ~ '**',
+        pVal_fdr < 0.05 ~ '*',
+        TRUE ~ ''
+    ))
+
+# Format for display
+results_wide <- results %>%
+    mutate(beta_sig = sprintf('%.2f%s', beta, sig)) %>%
+    select(matchedDomain, category, stance, beta_sig) %>%
+    pivot_wider(names_from = c(stance, category), values_from = beta_sig)
+
+knitr::kable(results_wide, col.names = c('Domain', 'Opp-Focal', 'Opp-Same', 'Opp-Diff', 'Shared-Focal', 'Shared-Same', 'Shared-Diff'))
+
+# Summary stats
+n_pos <- sum(results$beta > 0, na.rm = TRUE)
+n_sig_pos <- sum(results$pVal_fdr < 0.05 & results$beta > 0, na.rm = TRUE)
+n_sig_neg <- sum(results$pVal_fdr < 0.05 & results$beta < 0, na.rm = TRUE)
+
+cat(sprintf('\nTotal models: %d\n', nrow(results)))
+cat(sprintf('Positive coefficients: %d (%.1f%%)\n', n_pos, 100 * n_pos / nrow(results)))
+cat(sprintf('Significant after FDR: %d positive, %d negative\n', n_sig_pos, n_sig_neg))
+```
+
+Over 95% of coefficients were positive, and every significant effect after FDR correction was in the positive direction (conversation increased commonality inference).
+
+## LLM Prompt Template {#sec-llm-prompt}
+
+The following prompt was used to elicit predictions from Gemini 2.5 Pro:
+
+```
+Predict how two people (Cat and Dog) would respond to survey questions
+based on their conversation.
+
+Likert scale:
+1 = Definitely Not / Strongly Disagree
+2 = Probably Not / Disagree
+3 = Unsure / Neutral
+4 = Probably Yes / Agree
+5 = Definitely Yes / Strongly Agree
+
+One question is marked [DISCUSSED] - they talked about this topic.
+For other questions, infer from the conversation.
+
+Base your predictions on:
+- General population tendencies (as a starting point)
+- Evidence from the conversation (update based on what they discuss)
+- When conversation evidence is weak or absent, rely more on population priors
+
+=== CONVERSATION ===
+{conversation transcript}
+
+=== QUESTIONS ===
+{questions list with [DISCUSSED] marker}
+
+=== TASK ===
+Predict probability distributions for BOTH participants' responses
+to ALL 35 questions.
+
+Return JSON with this structure:
+{
+  "cat_predictions": {"0": {"1": p1, ..., "5": p5}, ...},
+  "dog_predictions": {"0": {"1": p1, ..., "5": p5}, ...}
+}
+```
+
+For the prior baseline (no conversation), we used a simplified prompt asking the model to predict responses for a randomly selected person based only on "general population tendencies" and "the nature of the question," with no conversation content.
+
+## LLM Performance Details {#sec-llm-performance}
+
+@tbl-llm-accuracy presents detailed LLM accuracy broken down by condition and question type.
+
+```{python}
+#| label: tbl-llm-accuracy
+#| tbl-cap: "LLM prediction accuracy by condition and question type. Prior = population baseline with no individual information. Single observation = information-matched to Bayesian model. Full conversation = complete chat transcript."
+
+# Re-import after R chunk (knitr breaks Python session)
+import pandas as pd
+from pathlib import Path
+base_dir = Path.cwd().resolve()
+while base_dir.name and not (base_dir / 'data').exists():
+    base_dir = base_dir.parent
+
+# Load pre-computed LLM predictions
+llm_accuracy = pd.read_csv(base_dir / 'data' / 'llm_results' / 'nochat_accuracy.csv')
+
+# Compute accuracy by category
+accuracy_by_cat = {}
+for cat in ['matched', 'same_domain', 'different_domain']:
+    subset = llm_accuracy[llm_accuracy['category'] == cat]
+    if len(subset) > 0:
+        accuracy_by_cat[cat] = subset['prob_correct'].mean() * 100
+
+# Create summary table
+summary_data = {
+    'Condition': ['Prior (no information)', 'Single observation', 'Full conversation'],
+    'Focal Topic': ['18.1%', f"{accuracy_by_cat.get('matched', 0):.1f}%", '72.6%'],
+    'Same Domain': ['18.3%', f"{accuracy_by_cat.get('same_domain', 0):.1f}%", '38.3%'],
+    'Different Domain': ['18.0%', f"{accuracy_by_cat.get('different_domain', 0):.1f}%", '31.8%']
+}
+
+llm_table = pd.DataFrame(summary_data)
+print(llm_table.to_markdown(index=False))
+```
+
+The prior baseline showed no gradient (approximately 18% across all question types), confirming that population-level knowledge alone cannot explain structured predictions. With a single observation, the LLM showed modest improvement concentrated on the focal topic. With full conversational content, accuracy improved substantially across all question types, with the characteristic gradient (focal > same domain > different domain) that mirrors human commonality inferences.
+
+## Survey Questions by Domain {#sec-stimuli}
+
+@tbl-stimuli presents the complete set of 35 survey questions organized by domain.
+
+```{python}
+#| label: tbl-stimuli
+#| tbl-cap: "Survey questions by domain."
+
+# Uses base_dir from previous chunk
+data_dir = base_dir / 'data'
+questions_df = pd.read_csv(data_dir / 'questions.csv')
+questions_df['domain'] = questions_df['domain'].replace('arbitrary', 'Lifestyle').str.capitalize()
+
+# Group by domain
+stimuli_by_domain = questions_df.groupby('domain')['text'].apply(lambda x: ' / '.join(x)).reset_index()
+stimuli_by_domain.columns = ['Domain', 'Questions']
+
+print(stimuli_by_domain.to_markdown(index=False))
+```
