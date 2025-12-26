@@ -187,8 +187,6 @@ for i, exp in enumerate(['no-chat', 'chat']):
 sns.despine()
 plt.suptitle('Manipulation Check: Focal Question', fontweight='bold', y=1.02)
 plt.tight_layout()
-if SAVE_FIGURES:
-    plt.savefig(figures_dir / 'manipulation_check.pdf', dpi=300, bbox_inches='tight')
 plt.show()
 ```
 
@@ -280,126 +278,7 @@ summary(model)
 confint(model, method = "Wald")
 ```
 
-## 5. Distance-Commonality (Figure S1)
-
-Paper reports: distance β = −1.32, CI [−1.36, −1.29]; distance × experiment β = −0.32, CI [−0.36, −0.29] (p.6)
-
-Commonality expectations as a function of predicted distance between partner and self. Fill color indicates stance (pink is shared, blue is opposing) and panel position indicates interaction type (left is imagined, right is real).
-
-```{python}
-#| fig-cap: "Figure S1: Commonality expectations as a function of predicted distance"
-#| fig-width: 10
-#| fig-height: 5
-
-# Reload modules and data (Python state can be lost between chunks)
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-from pathlib import Path
-base_dir = Path.cwd().resolve()
-while base_dir.name and not (base_dir / 'data').exists():
-    base_dir = base_dir.parent
-figures_dir = base_dir / 'outputs' / 'figures'
-lowhigh_palette = ['#648FFF', '#DC267F']
-SAVE_FIGURES = True
-if 'inf_df' not in dir():
-    inf_df = pd.read_csv('/tmp/inf_df.csv', low_memory=False)
-
-# Aggregate by participant first
-inf_grouped = inf_df.groupby(['experiment', 'stance', 'pid', 'distance'])['predictShared'].mean().reset_index()
-
-# Bootstrap CI function
-def bootstrap_ci(data, n_boot=1000, ci=95):
-    boot_means = [np.random.choice(data, size=len(data), replace=True).mean() for _ in range(n_boot)]
-    lower = np.percentile(boot_means, (100 - ci) / 2)
-    upper = np.percentile(boot_means, 100 - (100 - ci) / 2)
-    return lower, upper
-
-# Compute means and CIs
-summary_data = []
-for exp in ['no-chat', 'chat']:
-    for stance in ['opposing', 'shared']:
-        for dist in range(5):
-            subset = inf_grouped[(inf_grouped['experiment'] == exp) &
-                                  (inf_grouped['stance'] == stance) &
-                                  (inf_grouped['distance'] == dist)]['predictShared']
-            if len(subset) > 0:
-                mean_val = subset.mean()
-                ci_low, ci_high = bootstrap_ci(subset.values)
-                summary_data.append({
-                    'experiment': exp, 'stance': stance, 'distance': dist,
-                    'mean': mean_val, 'ci_low': ci_low, 'ci_high': ci_high
-                })
-
-summary_df = pd.DataFrame(summary_data)
-
-# Create figure
-fig, axes = plt.subplots(1, 2, figsize=(10, 5), sharey=True)
-plt.rcParams.update({'font.size': 12})
-
-exp_labels = {'no-chat': 'Imagined', 'chat': 'Real'}
-stance_colors = {'opposing': '#648FFF', 'shared': '#DC267F'}  # blue, pink
-
-for i, exp in enumerate(['no-chat', 'chat']):
-    ax = axes[i]
-    exp_data = summary_df[summary_df['experiment'] == exp]
-
-    bar_width = 0.35
-    x = np.arange(5)
-
-    for j, stance in enumerate(['opposing', 'shared']):
-        stance_data = exp_data[exp_data['stance'] == stance].sort_values('distance')
-        offset = -bar_width/2 if stance == 'opposing' else bar_width/2
-
-        bars = ax.bar(x + offset, stance_data['mean'], bar_width,
-                      color=stance_colors[stance], alpha=0.8,
-                      label=stance.capitalize() if i == 1 else '')
-
-        # Error bars - no caps
-        ax.errorbar(x + offset, stance_data['mean'],
-                    yerr=[stance_data['mean'] - stance_data['ci_low'],
-                          stance_data['ci_high'] - stance_data['mean']],
-                    fmt='none', color='black', capsize=0, linewidth=1.5)
-
-    ax.set_xlabel('Predicted Distance\n(|Prediction for Partner − Own|)', fontsize=14)
-    ax.set_xticks(x)
-    ax.set_xticklabels(['0', '1', '2', '3', '4'], fontsize=12)
-    ax.set_ylim([0, 1])
-    ax.set_yticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
-    ax.text(-0.1, 1.05, chr(65 + i), transform=ax.transAxes, fontsize=16, fontweight='bold', va='bottom')
-    ax.set_title(exp_labels[exp], fontsize=14, fontweight='bold')
-    ax.tick_params(labelsize=11)
-    ax.grid(False)
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-
-    if i == 0:
-        ax.set_ylabel('Commonality Expectation', fontsize=14)
-    if i == 1:
-        ax.legend(title='Stance', frameon=False, loc='upper right', fontsize=11)
-
-plt.tight_layout()
-plt.savefig(figures_dir / 'figure_s1.pdf', dpi=300, bbox_inches='tight')
-plt.show()
-
-print(f'\nFigure S1 saved to {figures_dir / "figure_s1.pdf"}')
-```
-
-```{python}
-#| output: false
-inf_df.to_csv('/tmp/inf_df.csv', index=False)
-```
-
-```{r}
-inf_df <- read.csv('/tmp/inf_df.csv')
-model <- glmer(predictShared ~ distance_num * experiment_num * stance_num + (1|pid),
-               data = inf_df, family = binomial)
-summary(model)
-confint(model, method = "Wald")
-```
-
-## 6. Domain Analysis (Figure 3 + Domain-Specific Models)
+## 5. Domain Analysis (Figure 3 + Domain-Specific Models)
 
 Paper reports: 42 models (7 domains × 3 types × 2 stances), >95% positive coefficients, all significant effects positive after FDR (p.9)
 
@@ -504,7 +383,7 @@ cat(sprintf('Significant after FDR: %d positive, %d negative\n', n_sig_pos, n_si
 cat('\nPaper reports: >95% positive, all significant effects positive\n')
 ```
 
-## 7. Sample Description
+## 6. Sample Description
 
 ```{python}
 # Reload data
