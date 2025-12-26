@@ -31,13 +31,21 @@ Main trial-level data with participant responses and predictions. Each row is on
 | `question_type` | Category: `observed` (matched), `same_domain`, or `different_domain` |
 
 ### `questions.csv`
-The 35 survey questions used in the study.
+The 35 survey questions used in the study, with normative ratings from an independent sample (N = 15–27 per dimension).
 
 | Column | Description |
 |--------|-------------|
 | `num` | Question number (1-35) |
 | `text` | Question text |
 | `domain` | Domain category (7 domains, 5 questions each) |
+| `norm_learn` | "How much would you learn about your partner from their answer?" (0–100) |
+| `norm_interest` | "How interested would you be in hearing your partner's response?" (0–100) |
+| `norm_deep` | "How deep is this question?" (0–100) |
+| `norm_likely` | "How likely would you be to ask this question?" (0–100) |
+| `norm_divisive` | "How divisive is this question?" (0–100) |
+| `norm_personal` | "How much personal information does this question ask for?" (0–100) |
+| `norm_relevant` | "How relevant to your own life is this question?" (0–100) |
+| `norm_same` | "What percentage of other people do you expect share your opinions?" (0–100) |
 
 ### `messages.csv`
 Conversation transcripts from the chat condition.
