@@ -58,7 +58,7 @@ from polars import col, lit
 
 plt.rcParams['font.family'] = 'Helvetica Neue'
 sns.set_style('whitegrid')
-SAVE_FIGURES = False
+SAVE_FIGURES = True
 ```
 
 ```{python}
@@ -237,7 +237,14 @@ Paper reports: commonality → SR-G β = 1.84, CI [1.60, 2.08]; three-way intera
 
 ```{python}
 # Aggregate by participant (excluding observed question)
+# Reload df_pd if needed (Python state can be lost between chunks)
+if 'df_pd' not in dir():
+    import pandas as pd
+    df_pd = pd.read_csv('/tmp/main_df.csv', low_memory=False)
+
 inf_df = df_pd[df_pd['question'] != df_pd['matchedIdx']]
+inf_df.to_csv('/tmp/inf_df.csv', index=False)  # Save for later chunks
+
 srg_df = inf_df.groupby(['experiment', 'stance', 'pid', 'matchedDomain']).agg({
     'predictShared': 'mean', 'srgiResponse': 'mean',
     'experiment_num': 'first', 'stance_num': 'first'
@@ -283,6 +290,21 @@ Commonality expectations as a function of predicted distance between partner and
 #| fig-cap: "Figure S1: Commonality expectations as a function of predicted distance"
 #| fig-width: 10
 #| fig-height: 5
+
+# Reload modules and data (Python state can be lost between chunks)
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from pathlib import Path
+base_dir = Path.cwd().resolve()
+while base_dir.name and not (base_dir / 'data').exists():
+    base_dir = base_dir.parent
+figures_dir = base_dir / 'outputs' / 'figures'
+lowhigh_palette = ['#648FFF', '#DC267F']
+SAVE_FIGURES = True
+if 'inf_df' not in dir():
+    inf_df = pd.read_csv('/tmp/inf_df.csv', low_memory=False)
 
 # Aggregate by participant first
 inf_grouped = inf_df.groupby(['experiment', 'stance', 'pid', 'distance'])['predictShared'].mean().reset_index()
@@ -359,7 +381,6 @@ for i, exp in enumerate(['no-chat', 'chat']):
 
 plt.tight_layout()
 plt.savefig(figures_dir / 'figure_s1.pdf', dpi=300, bbox_inches='tight')
-plt.savefig(figures_dir / 'figure_s1.png', dpi=150, bbox_inches='tight')
 plt.show()
 
 print(f'\nFigure S1 saved to {figures_dir / "figure_s1.pdf"}')
@@ -386,6 +407,20 @@ Paper reports: 42 models (7 domains × 3 types × 2 stances), >95% positive coef
 #| fig-cap: "Figure 3: Domain-level heatmaps"
 #| fig-width: 10
 #| fig-height: 10
+# Reload modules and data
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from pathlib import Path
+base_dir = Path.cwd().resolve()
+while base_dir.name and not (base_dir / 'data').exists():
+    base_dir = base_dir.parent
+figures_dir = base_dir / 'outputs' / 'figures'
+lowhigh_palette = ['#648FFF', '#DC267F']
+SAVE_FIGURES = True  # Save figures when running
+df_pd = pd.read_csv('/tmp/main_df.csv', low_memory=False)
+
 domain_order = ['Lifestyle', 'Background', 'Identity', 'Morality', 'Politics', 'Preferences', 'Religion']
 category_order = ['sameQ', 'sameD', 'diffD']
 category_labels = ['Same\nQuestion', 'Same\nDomain', 'Different\nDomain']
@@ -469,50 +504,13 @@ cat(sprintf('Significant after FDR: %d positive, %d negative\n', n_sig_pos, n_si
 cat('\nPaper reports: >95% positive, all significant effects positive\n')
 ```
 
-## 7. Prior Calibration (SI)
-
-Paper reports: β = 0.15, CI [0.09, 0.21] for population rate predicting commonality.
+## 7. Sample Description
 
 ```{python}
-# Use main behavioral data for prior calibration
-emp = pd.read_csv(data_dir / 'responses.csv')
-n_participants = emp['pid'].nunique()
+# Reload data
+import pandas as pd
+df_pd = pd.read_csv('/tmp/main_df.csv', low_memory=False)
 
-props = emp.groupby(['question', 'preChatResponse']).size().reset_index(name='count')
-props['prop'] = props['count'] / n_participants
-
-joint = []
-for _, row in props.iterrows():
-    subset = emp[(emp['question'] == row['question']) & (emp['preChatResponse'] == row['preChatResponse'])]
-    joint.append(subset['predictShared'].mean() if len(subset) > 0 else np.nan)
-props['joint'] = joint
-props = props.dropna()
-
-slope, intercept, r, p, se = linregress(props['prop'], props['joint'])
-print(f'β = {slope:.2f}, 95% CI: [{slope - 1.96*se:.2f}, {slope + 1.96*se:.2f}], r = {r:.2f}')
-print(f'Paper reports: β = 0.15, CI [0.09, 0.21]')
-```
-
-```{python}
-#| fig-width: 5
-#| fig-height: 4
-fig, ax = plt.subplots(figsize=(5, 4))
-sns.regplot(x='prop', y='joint', data=props, ax=ax,
-            scatter_kws={'alpha': 0.5}, line_kws={'color': '#3a0ca3'})
-ax.set_xlabel('Population Response Proportion', fontweight='bold')
-ax.set_ylabel('P(Expect Shared)', fontweight='bold')
-ax.set_xlim([0, 1])
-ax.set_ylim([0, 1])
-ax.text(0.05, 0.95, f'r = {r:.2f}', transform=ax.transAxes)
-plt.title('Prior Calibration')
-if SAVE_FIGURES:
-    plt.savefig(figures_dir / 'prior_calibration.pdf', dpi=300, bbox_inches='tight')
-plt.show()
-```
-
-## 8. Sample Description
-
-```{python}
 print('=== Sample Description ===')
 print(f"Total participants: N = {df_pd['pid'].nunique()}")
 print(f"  No-chat: n = {df_pd[df_pd['experiment'] == 'no-chat']['pid'].nunique()}")
