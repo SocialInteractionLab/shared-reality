@@ -24,8 +24,8 @@ knitr:
 ```{r}
 #| label: setup
 #| include: false
-library(reticulate)
 Sys.setenv(RETICULATE_PYTHON = "/Users/rxdh/miniconda3/bin/python3")
+library(reticulate)
 use_python("/Users/rxdh/miniconda3/bin/python3", required = TRUE)
 library(lme4)
 library(lmerTest)
@@ -91,6 +91,9 @@ df_pd['stance_num'] = df_pd['stance'].map({'opposing': -1, 'shared': 1})
 df_pd['category_num'] = df_pd['category'].map({'sameQ': 1, 'sameD': 0, 'diffD': -1}).astype(float)
 df_pd['experiment_num'] = df_pd['experiment'].map({'no-chat': -1, 'chat': 1})
 df_pd['distance_num'] = df_pd['distance'].map({0: 2, 1: 1, 2: 0, 3: -1, 4: -2})
+
+# Save processed data for later chunks (Python state can be lost)
+df_pd.to_csv('/tmp/df_pd_processed.csv', index=False)
 
 # Inference subset (excludes observed question)
 inf_df = df_pd[df_pd['question'] != df_pd['matchedIdx']]
@@ -568,12 +571,83 @@ print(f'Scrambled loadings: Gradient = +{scrambled_gradient:.3f} +/- {scrambled_
 print(f'z = {z_score:.2f}, p < .001')
 ```
 
+## Question Property Norms {#sec-norms}
+
+To characterize the stimulus set, an independent sample (N = 15–27 per dimension) rated each question on several dimensions: how personally revealing, how divisive or controversial, how deep, how much one would learn from the answer, and expected population agreement. Ratings were made on 0–100 scales.
+
+```{python}
+#| label: fig-norms
+#| fig-cap: "Normative ratings of question properties by domain. Cells show mean ratings (0–100 scale) across questions within each domain. Domains are sorted by mean personal informativeness rating."
+#| fig-width: 7
+#| fig-height: 5
+
+# Re-import after R chunks (reticulate loses Python state)
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from pathlib import Path
+
+# Re-establish paths
+base_dir = Path.cwd().resolve()
+while base_dir.name and not (base_dir / 'data').exists():
+    base_dir = base_dir.parent
+data_dir = base_dir / 'data'
+
+# Load questions with norms
+questions = pd.read_csv(data_dir / 'questions.csv')
+
+# Compute domain-level means
+norm_cols = ['norm_personal', 'norm_divisive', 'norm_deep', 'norm_learn', 'norm_same']
+domain_norms = questions.groupby('domain')[norm_cols].mean()
+
+# Rename for display
+domain_norms.index = domain_norms.index.str.replace('arbitrary', 'Lifestyle').str.capitalize()
+domain_norms.columns = ['Personal', 'Divisive', 'Deep', 'Learn', 'Exp. Agreement']
+
+# Sort by Personal (most theoretically relevant)
+domain_norms = domain_norms.sort_values('Personal', ascending=False)
+
+# Create heatmap
+fig, ax = plt.subplots(figsize=(7, 5))
+plt.rcParams.update({'font.size': 11, 'font.family': 'Helvetica Neue'})
+
+im = ax.imshow(domain_norms.values, cmap='YlOrRd', aspect='auto', vmin=15, vmax=75)
+
+# Labels
+ax.set_xticks(range(len(domain_norms.columns)))
+ax.set_xticklabels(domain_norms.columns, fontsize=11)
+ax.set_yticks(range(len(domain_norms.index)))
+ax.set_yticklabels(domain_norms.index, fontsize=11)
+
+# Add values to cells
+for i in range(len(domain_norms.index)):
+    for j in range(len(domain_norms.columns)):
+        val = domain_norms.iloc[i, j]
+        color = 'white' if val > 50 else 'black'
+        ax.text(j, i, f'{val:.0f}', ha='center', va='center', fontsize=10, color=color)
+
+# Colorbar
+cbar = plt.colorbar(im, ax=ax, shrink=0.8, pad=0.02)
+cbar.set_label('Mean Rating', fontsize=11)
+
+ax.set_xlabel('Question Property', fontsize=12)
+ax.set_ylabel('Domain', fontsize=12)
+
+plt.tight_layout()
+plt.show()
+```
+
+@fig-norms shows domain-level means for key question properties. Religion and identity questions were rated as most personally revealing, while politics and religion were rated as most divisive. Lifestyle and preference questions were rated as least deep and least controversial. This variation in perceived question properties aligns with the differential transfer effects observed across domains and validates that experimenter-assigned domain labels capture meaningful psychological distinctions in how people perceive different types of beliefs.
+
 ## Domain-Specific Regression Results {#sec-domain-models}
 
 @tbl-domain-models presents the full results of the 42 logistic regression models examining the effect of real vs. imagined interaction on commonality expectations, broken down by focal domain, generalization type, and stance condition. Positive coefficients indicate that conversation increased commonality expectations relative to observation-only.
 
 ```{python}
 #| output: false
+# Reload processed data (saved in load-data chunk)
+import pandas as pd
+df_pd = pd.read_csv('/tmp/df_pd_processed.csv', low_memory=False)
 df_pd.to_csv('/tmp/main_df.csv', index=False)
 ```
 
