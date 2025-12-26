@@ -97,9 +97,11 @@ def compute_nochat_accuracy(results: list) -> pd.DataFrame:
     matched_info = {}
     matched_rows = nochat[nochat['is_matched'] == True]
     for _, row in matched_rows.iterrows():
+        mq = int(row['matched_question'])  # 1-indexed question number
         matched_info[row['pid']] = {
-            'matched_question': int(row['matched_question']),
-            'matched_domain': row.get('matched_domain', questions.iloc[int(row['matched_question'])]['domain'])
+            'matched_question': mq,
+            # Convert 1-indexed to 0-indexed for iloc lookup
+            'matched_domain': row.get('matched_domain', questions.iloc[mq - 1]['domain'])
         }
 
     # Compute accuracy for each prediction
@@ -128,16 +130,21 @@ def compute_nochat_accuracy(results: list) -> pd.DataFrame:
         for q_str, probs in predictions.items():
             q_idx = int(q_str)
 
-            if q_idx not in ground_truth[pid]:
+            # Convert 0-indexed prediction key to 1-indexed question number
+            # (predictions use 0-34, responses.csv uses 1-35)
+            q_num = q_idx + 1
+
+            if q_num not in ground_truth[pid]:
                 continue
 
-            true_response = ground_truth[pid][q_idx]
+            true_response = ground_truth[pid][q_num]
             prob_correct = float(probs.get(str(true_response), 0))
 
             # Determine question category
             q_domain = questions.iloc[q_idx]['domain'] if q_idx < len(questions) else None
 
-            if q_idx == matched_q:
+            # matched_q uses 1-indexed question numbers, so compare with q_num
+            if q_num == matched_q:
                 category = 'matched'
             elif q_domain and matched_domain and q_domain.lower() == matched_domain.lower():
                 category = 'same_domain'
@@ -146,7 +153,7 @@ def compute_nochat_accuracy(results: list) -> pd.DataFrame:
 
             records.append({
                 'pid': pid,
-                'question': q_idx,
+                'question': q_num,  # Use 1-indexed for consistency
                 'true_response': true_response,
                 'prob_correct': prob_correct,
                 'category': category,
@@ -217,10 +224,11 @@ def compute_chat_timecourse_accuracy(results: list) -> pd.DataFrame:
     matched_info = {}
     matched_rows = unified_chat[unified_chat['is_matched'] == True]
     for _, row in matched_rows.iterrows():
-        mq = int(row['matched_question'])
+        mq = int(row['matched_question'])  # 1-indexed question number
         matched_domain = row.get('matched_domain')
-        if pd.isna(matched_domain) and mq < len(questions):
-            matched_domain = questions.iloc[mq]['domain']
+        # Convert 1-indexed to 0-indexed for iloc lookup
+        if pd.isna(matched_domain) and mq - 1 < len(questions):
+            matched_domain = questions.iloc[mq - 1]['domain']
         matched_info[row['pid']] = {
             'matched_question': mq,
             'matched_domain': matched_domain
@@ -265,16 +273,21 @@ def compute_chat_timecourse_accuracy(results: list) -> pd.DataFrame:
             for q_str, probs in author_preds.items():
                 q_idx = int(q_str)
 
-                if q_idx not in ground_truth[pid]:
+                # Convert 0-indexed prediction key to 1-indexed question number
+                # (predictions use 0-34, responses.csv uses 1-35)
+                q_num = q_idx + 1
+
+                if q_num not in ground_truth[pid]:
                     continue
 
-                true_response = ground_truth[pid][q_idx]
+                true_response = ground_truth[pid][q_num]
                 prob_correct = float(probs.get(str(true_response), 0))
 
                 # Determine question category
                 q_domain = questions.iloc[q_idx]['domain'] if q_idx < len(questions) else None
 
-                if q_idx == matched_q:
+                # matched_q uses 1-indexed question numbers, so compare with q_num
+                if q_num == matched_q:
                     category = 'matched'
                 elif q_domain and matched_domain and q_domain.lower() == matched_domain.lower():
                     category = 'same_domain'
@@ -292,7 +305,7 @@ def compute_chat_timecourse_accuracy(results: list) -> pd.DataFrame:
                     'bin_seconds': time_bin * 15,
                     'author': author,
                     'pid': pid,
-                    'question': q_idx,
+                    'question': q_num,  # Use 1-indexed question number for consistency
                     'match_type': match_type,
                     'question_category': category,
                     'true_response': true_response,
