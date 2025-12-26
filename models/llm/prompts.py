@@ -215,3 +215,70 @@ Return JSON with this structure (using question indices 0-{len(questions_df)-1})
     ...
   }}
 }}"""
+
+
+def create_pshared_prompt(conversation: str, questions_df: pd.DataFrame, chat_topic: str) -> str:
+    """Create prompt for directly predicting P(shared) - probability of agreement.
+
+    Instead of predicting full probability distributions, this prompt asks the LLM
+    to directly predict whether two people would agree on each question based on
+    their conversation.
+
+    Args:
+        conversation: Interleaved conversation text with speaker labels (Cat/Dog)
+        questions_df: DataFrame with columns [questionText, domain]
+        chat_topic: The question they discussed (marked [DISCUSSED] in output)
+
+    Returns:
+        Formatted prompt string
+    """
+    conversation = str(conversation) if not pd.isna(conversation) else ""
+
+    # Randomize question order (seeded by conversation hash for reproducibility)
+    seed = hash(conversation) % (2**32)
+    rng = random.Random(seed)
+    indices = list(range(len(questions_df)))
+    rng.shuffle(indices)
+
+    # Build question list with [DISCUSSED] marker and domain labels
+    questions_list = "\n".join([
+        f"{idx}. [{questions_df.iloc[idx]['domain'].upper()}] {questions_df.iloc[idx]['questionText']}" +
+        (" [DISCUSSED]" if questions_df.iloc[idx]['questionText'] == chat_topic else "")
+        for idx in indices
+    ])
+
+    return f"""You are predicting whether two people (Cat and Dog) would AGREE on various survey questions.
+
+Two people "share" a response if their Likert answers are within 2 points of each other (e.g., one says 3 and the other says 4 or 5).
+
+Based on their conversation, predict the probability that Cat and Dog would agree on each question.
+
+=== CONVERSATION ===
+{conversation if conversation else "(No conversation yet)"}
+
+=== QUESTIONS ===
+The questions are organized by domain. People who agree on one topic within a domain often (but not always) agree on related topics.
+
+{questions_list}
+
+=== COGNITIVE TASK ===
+This is a social cognition task. Use the conversation to:
+
+1. INFER each person's underlying beliefs, values, and worldview
+2. GENERALIZE: People with similar views on one topic often share views on related topics
+3. PREDICT: Based on inferred profiles, estimate agreement probability for each question
+
+Key insight: The question marked [DISCUSSED] gives you direct evidence. Questions in the SAME DOMAIN should show correlated beliefs. Different domains are less predictive.
+
+=== OUTPUT FORMAT ===
+For each question, return your probability estimate that Cat and Dog would agree (0.0 to 1.0).
+
+Return JSON with this structure (using question indices 0-{len(questions_df)-1}):
+{{
+  "agreement_probabilities": {{
+    "0": 0.85,
+    "1": 0.42,
+    "2": 0.71,
+    ...
+  }}
+}}"""

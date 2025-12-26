@@ -1,152 +1,165 @@
 # LLM Stance Detection
 
-Self-contained pipeline for predicting participant Likert responses using Gemini 3 Pro.
+Pipeline for predicting participant agreement using Gemini 3 Pro via Vertex AI batch predictions.
+
+## Quick Start
+
+```bash
+# Submit P(shared) batch (predicts agreement probabilities over time)
+python -m models.llm.pipeline submit pshared --max-bins 13
+
+# Check job status
+python -m models.llm.pipeline status pshared
+
+# Download and parse results
+python -m models.llm.pipeline download pshared
+```
 
 ## Overview
 
-This package submits batch prediction jobs to Google Cloud's Vertex AI to run Gemini 3 Pro. The model predicts probability distributions over Likert responses (1-5) for each of the 35 survey questions.
+This package submits batch prediction jobs to Google Cloud's Vertex AI. Two main prompt types are supported:
 
-All data is loaded from `/paper/data/` for self-containment.
+1. **P(shared)** - Directly predicts agreement probability for each question
+2. **Chat** - Predicts full probability distributions for each participant
 
 ## Requirements
 
-### Python packages
 ```bash
-pip install pandas google-cloud-aiplatform google-cloud-storage python-dotenv
-```
-
-### Google Cloud credentials
-Set these environment variables (or create a `.env` file):
-
-```bash
-GOOGLE_CLOUD_PROJECT=your-project-id
-GOOGLE_CLOUD_BUCKET=your-gcs-bucket
-GOOGLE_CLOUD_LOCATION=us-central1  # optional, defaults to us-central1
-```
-
-You also need to authenticate:
-```bash
+pip install pandas google-cloud-aiplatform google-cloud-storage vertexai
 gcloud auth application-default login
 ```
 
-## Usage
+## Pipeline Commands
 
-### Running the no-chat experiment
-
-The no-chat condition is information-matched to the Bayesian factor models—participants observe only their partner's single Likert response to one question.
+### Submit a batch job
 
 ```bash
-# Dry run (creates sample prompt, doesn't submit)
-python scripts/run_nochat_batch.py --dry-run
+# P(shared) predictions (recommended)
+python -m models.llm.pipeline submit pshared --max-bins 13
 
-# Submit to Gemini
-python scripts/run_nochat_batch.py
+# Full distribution predictions
+python -m models.llm.pipeline submit chat --max-bins 13
+
+# Options
+--max-bins N    # Number of 15-second time bins (default: 13 = ~3 min)
+--sample N      # Only process first N groups (for testing)
+--version V     # Output version suffix (default: v1)
+--dry-run       # Create batch file without submitting
 ```
 
-### Programmatic usage
+### Check job status
 
-```python
-from paper.models.llm import (
-    create_chat_prompt,
-    create_prior_prompt,
-    create_nochat_prompt,
-    load_questions,
-    load_unified_data,
-    load_nochat_observations
-)
-from paper.models.llm.batch import create_batch_request, submit_batch
-
-# Load data
-questions_df = load_questions()
-unified_df = load_unified_data()
-
-# Create a no-chat batch request
-nochat_obs = load_nochat_observations()
-for _, row in nochat_obs.iterrows():
-    prompt = create_nochat_prompt(
-        observed_question=row['matched_question_text'],
-        partner_response=int(row['partner_response']),
-        questions_df=questions_df
-    )
-    req = create_batch_request(
-        custom_id=f"nochat_{row['pid']}",
-        prompt=prompt
-    )
+```bash
+python -m models.llm.pipeline status pshared
+python -m models.llm.pipeline status chat
 ```
 
-### Prompt templates
+### Download and parse results
 
-Three prompt templates are provided:
-
-1. **`create_chat_prompt()`** - For predicting responses given conversation content
-   - Marks the discussed question with `[DISCUSSED]`
-   - Instructs model to use population priors + conversation evidence
-
-2. **`create_prior_prompt()`** - Baseline with no information
-   - Used to measure LLM's prior knowledge about population distributions
-   - No observation provided
-
-3. **`create_nochat_prompt()`** - Single observation (information-matched to Bayesian models)
-   - Receives partner's Likert response to ONE question
-   - Marks the observed question with `[OBSERVED]`
-   - Predicts all 35 questions based on this single observation
-
-## Model Configuration
-
-```python
-# config.py
-MODEL_CONFIG = {
-    "model": "gemini-3-pro-preview",
-    "temperature": 1.0,  # Gemini 3's optimized default
-    "max_tokens": 65536,
-    "thinking_level": "high",  # Extended reasoning
-}
+```bash
+python -m models.llm.pipeline download pshared
+python -m models.llm.pipeline download chat
 ```
 
-## Output Format
+Results are saved to `data/llm_results/`:
+- `pshared_timecourse.csv` - Agreement predictions by group/time/question
+- `chat_timecourse_accuracy.csv` - Full distribution predictions
 
-The model returns JSON with probability distributions:
+## Prompt Templates
 
+### P(shared) Prompt (`create_pshared_prompt`)
+
+Directly asks for agreement probability:
+
+```
+Two people "agree" if their Likert responses are within 1 point of each other.
+Questions are organized by domain. Questions in the SAME DOMAIN should show
+correlated beliefs.
+```
+
+Output format:
 ```json
 {
-  "predictions": {
-    "0": {"1": 0.05, "2": 0.10, "3": 0.20, "4": 0.40, "5": 0.25},
-    "1": {"1": 0.10, "2": 0.15, "3": 0.25, "4": 0.35, "5": 0.15},
+  "agreement_probabilities": {
+    "0": 0.85,
+    "1": 0.42,
     ...
   }
 }
 ```
 
-For chat prompts (with two participants):
+### Chat Prompt (`create_chat_prompt`)
+
+Predicts full probability distributions for each participant:
+
 ```json
 {
-  "cat_predictions": { ... },
-  "dog_predictions": { ... }
+  "cat_predictions": {"0": {"1": 0.1, "2": 0.2, ...}, ...},
+  "dog_predictions": {"0": {"1": 0.1, "2": 0.2, ...}, ...}
 }
 ```
 
-Question indices correspond to the shuffled order in the prompt (seeded for reproducibility).
+### Other Prompts
 
-## Data Files
-
-All data is loaded from `/paper/data/`:
-
-- `questions.csv` - 35 survey questions with domains
-- `responses.csv` - All participant response data (chat + no-chat conditions)
+- **`create_prior_prompt()`** - Baseline with no information
+- **`create_nochat_prompt()`** - Single observation (for no-chat condition)
 
 ## File Structure
 
 ```
 llm/
 ├── __init__.py      # Package exports
-├── config.py        # Paths and model configuration
-├── prompts.py       # Prompt templates (chat, prior, nochat)
+├── pipeline.py      # Unified submit/status/download pipeline
+├── prompts.py       # Prompt templates
 ├── data.py          # Data loading utilities
-├── batch.py         # Gemini batch submission
+├── config.py        # Paths and model configuration
 ├── batch_requests/  # Saved batch request files
-└── README.md        # This file
+│   └── *_batch_ids.json  # Job tracking info
+└── README.md
 ```
 
-## Scripts
+## Output Data
 
-- `scripts/run_nochat_batch.py` - Submit no-chat batch predictions
+### pshared_timecourse.csv
+
+| Column | Description |
+|--------|-------------|
+| group_id | Conversation group identifier |
+| time_bin | 15-second time bin (0-12) |
+| question | Question number (1-35) |
+| match_type | high/low (based on initial response similarity) |
+| question_category | matched/same_domain/different_domain |
+| predicted_agreement | LLM's predicted P(agree) |
+| actual_agreement | True if responses within 1 point |
+
+## Programmatic Usage
+
+```python
+from models.llm import (
+    create_pshared_prompt,
+    load_questions,
+    submit_batch,
+    check_status,
+    download_results,
+    compute_pshared_metrics,
+)
+
+# Create custom batch
+questions = load_questions()
+prompt = create_pshared_prompt(
+    conversation="Cat: I agree!\nDog: Me too!",
+    questions_df=questions,
+    chat_topic="Do you enjoy reading?"
+)
+```
+
+## Model Configuration
+
+```python
+MODEL_CONFIG = {
+    "model": "gemini-3-pro-preview",
+    "temperature": 1.0,
+    "max_tokens": 65536,
+    "thinking_level": "high",
+}
+```
