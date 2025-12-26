@@ -1,4 +1,4 @@
-# Shared Reality Through Cooperative Communication
+# Commonality inferences
 
 Code and data for reproducing the analyses in the paper.
 
