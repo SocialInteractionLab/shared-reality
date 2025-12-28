@@ -22,12 +22,9 @@ This document reproduces all behavioral analyses and figures from the paper.
 
 1. **Setup** - Imports and data loading
 2. **Manipulation Check** - Stance recognition (Paper p.6)
-3. **Generalization Gradient** - Figure 2A + main model (Paper p.8-9)
-4. **SR-G Prediction** - Figure 2B + model (Paper p.8)
-5. **Distance-Commonality** - Figure 5 SI + model (Paper p.6)
-6. **Domain Analysis** - Figure 3 + 42 domain-specific models (Paper p.9)
-7. **Prior Calibration** - SI analysis
-8. **Sample Description** - Methods section
+3. **Figure 2** - Generalization gradient with condition overlay + SR-G prediction (Paper p.8-9)
+4. **Domain Analysis** - Figure 3 + 42 domain-specific models (Paper p.9)
+5. **Sample Description** - Methods section
 
 ## 1. Setup
 
@@ -164,34 +161,179 @@ print('→ Chat elevates commonality judgments in BOTH cells')
 print('  (even when partners disagreed, conversation led to perceiving more common ground)')
 ```
 
-## 3. Generalization Gradient (Figure 2A)
+## 3. Figure 2: Generalization Gradient and SR-G Prediction
 
-Paper reports: stance × question type interaction β = 0.54, 95% CI [0.48, 0.59] (p.8-9)
+Paper reports:
+- Stance × question type interaction β = 0.54, 95% CI [0.48, 0.59] (p.8-9)
+- Commonality → SR-G β = 1.84, CI [1.60, 2.08]; three-way interaction β = −0.47, CI [−0.71, −0.23] (p.8)
 
 ```{python}
-#| fig-cap: "Figure 2A: Generalization gradient"
+#| fig-cap: "Figure 2: (A) Generalization gradient with condition overlay, (B) SR-G prediction"
 #| fig-width: 10
 #| fig-height: 4
-fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharey=True)
-for i, exp in enumerate(['no-chat', 'chat']):
-    ax = axes[i]
-    sns.barplot(data=df_pd[df_pd['experiment'] == exp], x='category', y='predictShared',
-                order=['sameQ', 'sameD', 'diffD'], hue='stance', hue_order=['opposing', 'shared'],
-                palette=lowhigh_palette, ax=ax)
-    ax.set_xlabel('Question Type')
-    ax.set_xticklabels(['Observed', 'Same Domain', 'Diff Domain'])
-    ax.set_title(exp.replace('-', ' ').title(), fontweight='bold')
-    ax.set_ylim([0, 1])
-    if i == 0:
-        ax.set_ylabel('Expected Commonality', fontweight='bold')
-        ax.get_legend().remove()
-    else:
-        ax.legend(title='Stance', labels=['Opposing', 'Shared'], frameon=False)
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
+from scipy import stats
+
+# Reload data and settings
+df_pd = pd.read_csv('/tmp/main_df.csv', low_memory=False)
+from pathlib import Path
+base_dir = Path.cwd().resolve()
+while base_dir.name and not (base_dir / 'data').exists():
+    base_dir = base_dir.parent
+figures_dir = base_dir / 'outputs' / 'figures'
+SAVE_FIGURES = True
+
+# Colors and style
+BLUE, PINK = '#648FFF', '#DC267F'
+plt.rcParams.update({
+    'font.family': 'Helvetica Neue',
+    'font.size': 12,
+    'axes.labelsize': 14,
+    'axes.titlesize': 14,
+    'xtick.labelsize': 12,
+    'ytick.labelsize': 12,
+    'legend.fontsize': 11,
+    'axes.spines.top': False,
+    'axes.spines.right': False,
+})
+
+def bootstrap_ci(data, n_boot=1000, ci=95, seed=42):
+    """Compute bootstrap confidence interval for the mean."""
+    np.random.seed(seed)
+    boot_means = [np.nanmean(np.random.choice(data, size=len(data), replace=True))
+                  for _ in range(n_boot)]
+    return np.percentile(boot_means, (100 - ci) / 2), np.percentile(boot_means, 100 - (100 - ci) / 2)
+
+fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+
+# =========================================================================
+# Panel A: Pooled gradient with condition overlay
+# =========================================================================
+ax = axes[0]
+
+category_order = ['sameQ', 'sameD', 'diffD']
+category_labels = ['Observed', 'Same Domain', 'Different Domain']
+stance_order = ['opposing', 'shared']
+colors = [BLUE, PINK]
+
+bar_width = 0.35
+x_positions = np.arange(len(category_order))
+jitter = 0.05
+dot_size = 70
+
+# Compute pooled means and CIs
+pooled_means, pooled_cis = {}, {}
+for stance in stance_order:
+    for cat in category_order:
+        subset = df_pd[(df_pd['stance'] == stance) & (df_pd['category'] == cat)]
+        pooled_means[(stance, cat)] = subset['predictShared'].mean()
+        pooled_cis[(stance, cat)] = bootstrap_ci(subset['predictShared'].values)
+
+# Compute condition-specific means
+condition_means = {}
+for exp in ['no-chat', 'chat']:
+    for stance in stance_order:
+        for cat in category_order:
+            subset = df_pd[(df_pd['experiment'] == exp) &
+                          (df_pd['stance'] == stance) &
+                          (df_pd['category'] == cat)]
+            condition_means[(exp, stance, cat)] = subset['predictShared'].mean()
+
+# Plot bars
+for i, (stance, color) in enumerate(zip(stance_order, colors)):
+    offset = (i - 0.5) * bar_width
+    means = [pooled_means[(stance, cat)] for cat in category_order]
+    lowers = [pooled_means[(stance, cat)] - pooled_cis[(stance, cat)][0] for cat in category_order]
+    uppers = [pooled_cis[(stance, cat)][1] - pooled_means[(stance, cat)] for cat in category_order]
+    ax.bar(x_positions + offset, means, bar_width, color=color, alpha=0.8,
+           yerr=[lowers, uppers], capsize=0, error_kw={'linewidth': 1.5})
+
+# Overlay condition dots (no connecting lines)
+from matplotlib.lines import Line2D
+
+for i, (stance, color) in enumerate(zip(stance_order, colors)):
+    offset = (i - 0.5) * bar_width
+    for j, cat in enumerate(category_order):
+        x_base = x_positions[j] + offset
+        nochat_mean = condition_means[('no-chat', stance, cat)]
+        chat_mean = condition_means[('chat', stance, cat)]
+        x_nochat, x_chat = x_base - jitter, x_base + jitter
+
+        # Open circle for no-chat, filled circle for chat
+        ax.scatter(x_nochat, nochat_mean, s=dot_size, facecolor='white', edgecolor=color, linewidth=2, zorder=3)
+        ax.scatter(x_chat, chat_mean, s=dot_size, facecolor=color, edgecolor='white', linewidth=1.5, zorder=3)
+
+ax.set_xlabel('')
+ax.set_ylabel('Expected Commonality')
+ax.set_xticks(x_positions)
+ax.set_xticklabels(category_labels)
+ax.set_ylim([0, 1])
+
+# Legend: Shared first, then Opposing, then dot types
+legend_elements = [
+    Patch(facecolor=PINK, alpha=0.8, label='Shared'),
+    Patch(facecolor=BLUE, alpha=0.8, label='Opposing'),
+    Line2D([0], [0], marker='o', color='w', markerfacecolor='black',
+           markeredgecolor='black', markersize=8, linestyle='None', label='Chat'),
+    Line2D([0], [0], marker='o', color='w', markerfacecolor='white',
+           markeredgecolor='black', markeredgewidth=1.5, markersize=8,
+           linestyle='None', label='No chat'),
+]
+ax.legend(handles=legend_elements, loc='upper right')
+
+ax.text(-0.12, 1.05, 'A', transform=ax.transAxes, fontsize=14, fontweight='bold')
+
+# =========================================================================
+# Panel B: SR-G prediction (pooled across interaction types)
+# =========================================================================
+ax = axes[1]
+
+inf_df = df_pd[df_pd['question'] != df_pd['matchedIdx']]
+srg_df = inf_df.groupby(['stance', 'pid', 'matchedDomain']).agg({
+    'predictShared': 'mean', 'srgiResponse': 'mean'
+}).reset_index()
+# Also save version with experiment for R model
+srg_df_full = inf_df.groupby(['experiment', 'stance', 'pid', 'matchedDomain']).agg({
+    'predictShared': 'mean', 'srgiResponse': 'mean',
+    'experiment_num': 'first', 'stance_num': 'first'
+}).reset_index()
+srg_df_full.to_csv('/tmp/srg_df.csv', index=False)
+
+for stance, color in zip(stance_order, colors):
+    subset = srg_df[srg_df['stance'] == stance]
+    ax.scatter(subset['predictShared'], subset['srgiResponse'], c=color, alpha=0.4, s=30)
+
+    x, y = subset['predictShared'].values, subset['srgiResponse'].values
+    mask = ~(np.isnan(x) | np.isnan(y))
+    x, y = x[mask], y[mask]
+
+    if len(x) > 2:
+        slope, intercept, r, p, se = stats.linregress(x, y)
+        x_line = np.linspace(x.min(), x.max(), 100)
+        y_line = slope * x_line + intercept
+        n, x_mean, ss_x = len(x), np.mean(x), np.sum((x - np.mean(x)) ** 2)
+        se_y = np.sqrt(np.sum((y - (slope * x + intercept)) ** 2) / (n - 2))
+        t_val = stats.t.ppf(0.975, n - 2)
+        se_line = se_y * np.sqrt(1/n + (x_line - x_mean) ** 2 / ss_x)
+        ax.plot(x_line, y_line, color=color, linewidth=2)
+        ax.fill_between(x_line, y_line - t_val * se_line, y_line + t_val * se_line, color=color, alpha=0.2)
+
+ax.set_xlabel('Expected Commonality')
+ax.set_ylabel('SR-G Score')
+ax.set_xlim([0, 1])
+ax.text(-0.12, 1.05, 'B', transform=ax.transAxes, fontsize=14, fontweight='bold')
+
 plt.tight_layout()
 if SAVE_FIGURES:
-    plt.savefig(figures_dir / 'figure2a_gradient.pdf', dpi=300, bbox_inches='tight')
+    plt.savefig(figures_dir / 'figure2.pdf', dpi=300, bbox_inches='tight')
 plt.show()
 ```
+
+### Gradient Model
 
 ```{r}
 main_df <- read.csv('/tmp/main_df.csv')
@@ -203,46 +345,7 @@ summary(model)
 confint(model, method = "Wald")
 ```
 
-## 4. SR-G Prediction (Figure 2B)
-
-Paper reports: commonality → SR-G β = 1.84, CI [1.60, 2.08]; three-way interaction β = −0.47, CI [−0.71, −0.23] (p.8)
-
-```{python}
-# Aggregate by participant (excluding observed question)
-# Reload df_pd if needed (Python state can be lost between chunks)
-if 'df_pd' not in dir():
-    import pandas as pd
-    df_pd = pd.read_csv('/tmp/main_df.csv', low_memory=False)
-
-inf_df = df_pd[df_pd['question'] != df_pd['matchedIdx']]
-inf_df.to_csv('/tmp/inf_df.csv', index=False)  # Save for later chunks
-
-srg_df = inf_df.groupby(['experiment', 'stance', 'pid', 'matchedDomain']).agg({
-    'predictShared': 'mean', 'srgiResponse': 'mean',
-    'experiment_num': 'first', 'stance_num': 'first'
-}).reset_index()
-```
-
-```{python}
-#| fig-cap: "Figure 2B: SR-G ~ Commonality"
-#| fig-width: 9
-#| fig-height: 4
-g = sns.lmplot(data=srg_df, x='predictShared', y='srgiResponse',
-               hue='stance', hue_order=['opposing', 'shared'],
-               col='experiment', col_order=['no-chat', 'chat'],
-               palette=lowhigh_palette, scatter_kws={'alpha': 0.3}, legend=False)
-g.set_xlabels('Expected Commonality', fontweight='bold');
-g.set_ylabels('SR-G', fontweight='bold');
-g.set_titles('{col_name}');
-if SAVE_FIGURES:
-    plt.savefig(figures_dir / 'figure2b_srg.pdf', dpi=300, bbox_inches='tight')
-plt.show()
-```
-
-```{python}
-#| output: false
-srg_df.to_csv('/tmp/srg_df.csv', index=False)
-```
+### SR-G Model
 
 ```{r}
 srg_df <- read.csv('/tmp/srg_df.csv')
@@ -252,7 +355,7 @@ summary(model)
 confint(model, method = "Wald")
 ```
 
-## 5. Domain Analysis (Figure 3 + Domain-Specific Models)
+## 4. Domain Analysis (Figure 3 + Domain-Specific Models)
 
 Paper reports: 42 models (7 domains × 3 types × 2 stances), >95% positive coefficients, all significant effects positive after FDR (p.9)
 
@@ -357,7 +460,7 @@ cat(sprintf('Significant after FDR: %d positive, %d negative\n', n_sig_pos, n_si
 cat('\nPaper reports: >95% positive, all significant effects positive\n')
 ```
 
-## 6. Sample Description
+## 5. Sample Description
 
 ```{python}
 # Reload data
