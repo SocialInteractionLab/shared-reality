@@ -280,5 +280,133 @@ class TestDeltaObservation:
             assert np.all(np.isfinite(preds)), f"Failed for k={k}"
 
 
+class TestDataIntegrity:
+    """
+    Tests for data preprocessing bugs that were fixed in PR #3.
+
+    These tests ensure critical columns exist and have correct values,
+    preventing regressions of bugs that caused gradient calculations to fail.
+    """
+
+    def test_question_type_uses_different_domain(self):
+        """question_type should use 'different_domain', not 'diff_domain'.
+
+        Bug: preprocess.py created 'diff_domain' but analysis code expected
+        'different_domain', causing gradient calculations to return NaN.
+        """
+        import pandas as pd
+        df = pd.read_csv('data/responses.csv', low_memory=False)
+
+        question_types = set(df['question_type'].unique())
+        assert 'different_domain' in question_types, \
+            "question_type should contain 'different_domain'"
+        assert 'diff_domain' not in question_types, \
+            "question_type should NOT contain 'diff_domain' (old buggy value)"
+        assert question_types == {'observed', 'same_domain', 'different_domain'}, \
+            f"Unexpected question_type values: {question_types}"
+
+    def test_compute_question_type_function(self):
+        """Directly test compute_question_type returns 'different_domain'.
+
+        This catches the bug at the source (preprocess.py) rather than just
+        checking the output CSV.
+        """
+        import sys
+        sys.path.insert(0, 'data/raw')
+        from preprocess import compute_question_type
+
+        # Mock row for different domain case
+        row = {'question': 5, 'matchedIdx': 1, 'preChatDomain': 'politics', 'matchedDomain': 'religion'}
+        result = compute_question_type(row)
+        assert result == 'different_domain', \
+            f"compute_question_type should return 'different_domain', got '{result}'"
+
+        # Test same domain case
+        row_same = {'question': 5, 'matchedIdx': 1, 'preChatDomain': 'politics', 'matchedDomain': 'politics'}
+        assert compute_question_type(row_same) == 'same_domain'
+
+        # Test observed case
+        row_obs = {'question': 1, 'matchedIdx': 1, 'preChatDomain': 'politics', 'matchedDomain': 'politics'}
+        assert compute_question_type(row_obs) == 'observed'
+
+    def test_nochat_has_observed_response(self):
+        """No-chat participants should have observedResponse (what they were shown).
+
+        Bug: preprocess.py discarded observedResponse and set partner_response=NaN,
+        making it impossible to run model evaluation on no-chat data.
+        """
+        import pandas as pd
+        df = pd.read_csv('data/responses.csv', low_memory=False)
+        nochat = df[df['experiment'] == 'no-chat']
+
+        assert 'observedResponse' in nochat.columns, \
+            "observedResponse column should exist"
+        assert nochat['observedResponse'].notna().sum() > 0, \
+            "No-chat should have non-null observedResponse values"
+        # All non-null values should be valid Likert (1-5)
+        valid_obs = nochat['observedResponse'].dropna()
+        assert ((valid_obs >= 1) & (valid_obs <= 5)).all(), \
+            "observedResponse values should be in [1, 5]"
+
+    def test_stance_column_exists_and_correct(self):
+        """stance column should exist and be derived from matchedTolerance.
+
+        stance = 'shared' if matchedTolerance <= 1, else 'opposing'
+        """
+        import pandas as pd
+        df = pd.read_csv('data/responses.csv', low_memory=False)
+
+        assert 'stance' in df.columns, "stance column should exist"
+        assert set(df['stance'].unique()) == {'shared', 'opposing'}, \
+            f"stance should be 'shared' or 'opposing', got: {df['stance'].unique()}"
+
+        # Verify stance is correctly derived from matchedTolerance
+        shared = df[df['stance'] == 'shared']
+        opposing = df[df['stance'] == 'opposing']
+
+        assert (shared['matchedTolerance'] <= 1).all(), \
+            "All 'shared' stance rows should have matchedTolerance <= 1"
+        assert (opposing['matchedTolerance'] > 1).all(), \
+            "All 'opposing' stance rows should have matchedTolerance > 1"
+
+    def test_gradient_calculation_returns_valid_value(self):
+        """Gradient calculation should return a valid float, not NaN.
+
+        Bug: With wrong column names, gradient calculation returned NaN
+        because filtering for 'different_domain' returned empty dataframes.
+        """
+        import pandas as pd
+        from analysis.utils import compute_gradient
+
+        df = pd.read_csv('data/responses.csv', low_memory=False)
+        nochat = df[df['experiment'] == 'no-chat']
+
+        gradient = compute_gradient(nochat, 'participant_binary_prediction')
+
+        assert not np.isnan(gradient), \
+            "Gradient should not be NaN (check question_type column values)"
+        assert -1 < gradient < 1, \
+            f"Gradient should be in reasonable range, got: {gradient}"
+
+    def test_nochat_evaluation_produces_predictions(self):
+        """Model evaluation on no-chat data should produce predictions.
+
+        Bug: With partner_response=NaN, prepare_evaluation_data returned
+        empty arrays, making model evaluation impossible.
+        """
+        import pandas as pd
+        from models.model import prepare_evaluation_data
+
+        df = pd.read_csv('data/responses.csv', low_memory=False)
+        nochat = df[df['experiment'] == 'no-chat']
+
+        eval_data = prepare_evaluation_data(nochat)
+
+        assert len(eval_data['r_partners']) > 100, \
+            f"Should have many no-chat participants, got: {len(eval_data['r_partners'])}"
+        assert len(eval_data['obs_qs']) == len(eval_data['r_partners']), \
+            "Arrays should have matching lengths"
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
