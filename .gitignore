@@ -41,3 +41,5 @@ outputs/
 
 # Internal documentation (not for repo)
 docs/
+analysis/model_analyses.quarto_ipynb
+analysis/supplement.tex

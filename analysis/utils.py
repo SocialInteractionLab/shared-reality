@@ -20,12 +20,12 @@ COLORS = {
     'opposing': '#648FFF',  # Blue (opposing stance)
     'shared': '#DC267F',    # Pink (shared stance)
     'human': '#2c3e50',     # Dark gray
-    'bayesian': '#648FFF',  # Blue
-    'egocentric': '#e07a5f',  # Muted coral
-    'scrambled': '#95a5a6',   # Light gray
+    'bayesian': '#8576FF',  # Purple
+    'egocentric': '#7BC9FF',  # Light blue
+    'scrambled': '#A3FFD6',   # Mint green
     'focal': '#2E86AB',     # Dark blue for focal/discussed
-    'same': '#A23B72',      # Magenta for same domain
-    'diff': '#95a5a6',      # Gray for different domain
+    'same': '#9F8AC2',      # Wisteria lavender for same domain
+    'diff': '#C8C8C8',      # Light gray for different domain
 }
 
 

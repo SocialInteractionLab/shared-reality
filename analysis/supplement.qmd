@@ -656,7 +656,7 @@ print(f"Anomalous 95% CI: [{np.percentile(anomaly_boots, 2.5):+.3f}, {np.percent
 
 The critical finding is that participants with anomalous self-structure (negative self-structure gradient, meaning their responses do not cluster by domain) nonetheless showed robust positive behavioral gradients (+0.123, 95% CI [0.050, 0.193]) indistinguishable from participants with typical structure (p = 0.97). If people projected from their own beliefs, these participants should show weak or reversed generalization gradients matching their own structure. Instead, all participants showed domain-structured generalization consistent with population-level knowledge.
 
-Furthermore, individual self-structure gradient did not correlate with behavioral gradient (r = 0.023, p = 0.605), nor with same-domain P(shared) judgments (r = −0.011, p = 0.802). These null correlations confirm that generalization behavior does not track the idiosyncratic structure of one's own beliefs.
+Furthermore, individual self-structure gradient did not correlate with behavioral gradient (r = 0.023, p = 0.605), nor with same-domain Expected Commonality judgments (r = −0.011, p = 0.802). These null correlations confirm that generalization behavior does not track the idiosyncratic structure of one's own beliefs.
 
 ## Scrambled Loadings Control {#sec-scrambled}
 
@@ -905,11 +905,11 @@ For the prior baseline (no conversation), we used a simplified prompt asking the
 
 ## LLM Timecourse Results {#sec-llm-pshared}
 
-@tbl-llm-pshared presents LLM-predicted P(shared) at conversation end compared to human judgments.
+@tbl-llm-pshared presents LLM-predicted Expected Commonality at conversation end compared to human judgments.
 
 ```{python}
 #| label: tbl-llm-pshared
-#| tbl-cap: "LLM-predicted P(shared) at conversation end (180s) compared to human judgments, by stance condition and question type."
+#| tbl-cap: "LLM-predicted Expected Commonality at conversation end (180s) compared to human judgments, by stance condition and question type."
 
 # Re-import after R chunk (knitr breaks Python session)
 import pandas as pd
@@ -952,14 +952,14 @@ for stance in ['shared', 'opposing']:
 # Create table matching LaTeX format
 rows = []
 for stance, stance_label in [('shared', 'Shared'), ('opposing', 'Opposing')]:
-    for cat, cat_label in [('matched', 'Focal (discussed)'), ('same_domain', 'Same domain'), ('different_domain', 'Different domain')]:
+    for cat, cat_label in [('matched', 'Focal Topic'), ('same_domain', 'Same Domain'), ('different_domain', 'Different Domain')]:
         llm_val = llm_pshared.get((stance, cat), float('nan'))
         human_val = human_pshared.get((stance, cat), float('nan'))
         rows.append({
             'Stance': stance_label,
             'Question Type': cat_label,
-            'LLM P(shared)': f'{llm_val:.2f}',
-            'Human P(shared)': f'{human_val:.2f}'
+            'LLM Expected Commonality': f'{llm_val:.2f}',
+            'Human Expected Commonality': f'{human_val:.2f}'
         })
 
 table_df = pd.DataFrame(rows)
