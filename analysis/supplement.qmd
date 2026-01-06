@@ -24,9 +24,8 @@ knitr:
 ```{r}
 #| label: setup
 #| include: false
-Sys.setenv(RETICULATE_PYTHON = "/Users/rxdh/miniconda3/bin/python3")
+# Use system Python (configure via RETICULATE_PYTHON env var if needed)
 library(reticulate)
-use_python("/Users/rxdh/miniconda3/bin/python3", required = TRUE)
 library(lme4)
 library(lmerTest)
 library(dplyr)
@@ -72,6 +71,16 @@ lowhigh_palette = ['#648FFF', '#DC267F']  # low (blue), high (pink)
 #| label: load-data
 #| include: false
 
+# Re-import (Python state can be lost between chunks with knitr engine)
+import polars as pl
+from polars import col, lit
+from pathlib import Path
+
+base_dir = Path.cwd().resolve()
+while base_dir.name and not (base_dir / 'data').exists():
+    base_dir = base_dir.parent
+data_dir = base_dir / 'data'
+
 # Load pre-merged behavioral data
 df = pl.read_csv(data_dir / 'responses.csv')
 df = df.filter(~col('matchedTolerance').is_null())
@@ -112,6 +121,17 @@ Interaction type moderated this relationship ($\beta = -0.32$, 95% CI $[-0.36, -
 #| fig-cap: "Commonality expectations as a function of predicted distance between partner and self responses. Participants expected less commonality as the predicted distance increased. Chat participants (right) maintained higher commonality expectations than observation-only participants (left) across all distance levels. Fill color indicates stance condition (pink = shared, blue = opposing). Error bars are 95% bootstrapped confidence intervals."
 #| fig-width: 10
 #| fig-height: 5
+
+# Re-import after R chunks (knitr engine loses Python state)
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Load processed data
+inf_df = pd.read_csv('/tmp/df_pd_processed.csv')
+inf_df = inf_df[inf_df['question'] != inf_df['matchedIdx']]
+lowhigh_palette = ['#648FFF', '#DC267F']
 
 # Aggregate by participant first
 inf_grouped = inf_df.groupby(['experiment', 'stance', 'pid', 'distance'])['predictShared'].mean().reset_index()
@@ -225,7 +245,10 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
 
-base_dir = Path('/Users/rxdh/Repos/shared-reality')
+# Find project root (contains data/ directory)
+base_dir = Path.cwd().resolve()
+while base_dir.name and not (base_dir / 'data').exists():
+    base_dir = base_dir.parent
 data_dir = base_dir / 'data'
 figures_dir = base_dir / 'outputs' / 'figures'
 sys.path.insert(0, str(base_dir))
@@ -340,6 +363,18 @@ We evaluated model performance across factor dimensionalities from $k = 1$ (firs
 #| fig-width: 7
 #| fig-height: 5
 
+import json
+import numpy as np
+import pandas as pd
+from pathlib import Path
+
+# Re-establish base_dir after R chunks
+base_dir = Path.cwd().resolve()
+while base_dir.name and not (base_dir / 'data').exists():
+    base_dir = base_dir.parent
+
+import sys
+sys.path.insert(0, str(base_dir))
 from models.model import CommonalityModel, load_evaluation_data
 
 # Load evaluation data
@@ -354,7 +389,6 @@ for qt in ['same_domain', 'different_domain']:
         NOCHAT_HUMAN[(qt, stance)] = cell['participant_binary_prediction'].mean()
 
 # Load fitted parameters (same as model_analyses.qmd)
-import json
 params_path = base_dir / 'models' / 'fitted_params.json'
 with open(params_path) as f:
     fitted_cache = json.load(f)
@@ -528,7 +562,10 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-base_dir = Path('/Users/rxdh/Repos/shared-reality')
+# Find project root (contains data/ directory)
+base_dir = Path.cwd().resolve()
+while base_dir.name and not (base_dir / 'data').exists():
+    base_dir = base_dir.parent
 data_dir = base_dir / 'data'
 figures_dir = base_dir / 'outputs' / 'figures'
 
