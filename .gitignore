@@ -37,3 +37,4 @@ analysis/*.pdf
 # Generated outputs
 latex/
 outputs/
+/scripts
