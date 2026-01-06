@@ -5,6 +5,7 @@ This folder contains the behavioral data from our experiments.
 ## Files
 
 ### `questions.csv`
+
 The 35 survey questions used in the study, with normative ratings from an independent sample (N = 15–27 per dimension).
 
 | Column | Description |
@@ -22,7 +23,8 @@ The 35 survey questions used in the study, with normative ratings from an indepe
 | `norm_same` | "What percentage of other people do you expect share your opinions?" (0–100) |
 
 ### `responses.csv`
-Main behavioral data with participant survey responses and predictions. 
+
+Main behavioral data with participant survey responses and predictions.
 
 | Column | Description |
 |--------|-------------|
@@ -33,21 +35,23 @@ Main behavioral data with participant survey responses and predictions.
 | `preChatDomain` | Domain of question (arbitrary, background, identity, morality, politics, preferences, religion) |
 | `preChatQuestion` | Question text |
 | `preChatResponse` | Participant's own response (1-7 Likert scale) |
-| `postChatResponse` | Participant's response after chat (chat condition only) |
+| `postChatResponse` | Participant's response after chat (real interaction condition only) |
 | `predictShared` | Binary prediction: does partner share this attitude? (0=no, 1=yes) |
-| `matchType` | Partner match condition: `high` (similar) or `low` (dissimilar) |
+| `matchType` | Partner match condition: `high` or `low` (original experiment labels) |
 | `matchedIdx` | Index of the matched (discussed) question |
 | `matchedDomain` | Domain of the matched question |
 | `matchedQuestion` | Text of the matched question |
-| `matchedTolerance` | Tolerance used for high/low matching |
+| `matchedTolerance` | Tolerance score used for partner matching (0-1=shared stance, 2+=opposing stance) |
 | `srgiResponse` | Interaction-specific Generalized Shared Reality (SR-G) scale response (Rossignac-Milon et al., 2021) |
 | `participant_binary_prediction` | Same as `predictShared` (derived column) |
 | `match_type` | Same as `matchType` (lowercase, derived) |
+| `stance` | Partner stance condition: `shared` (matchedTolerance ≤ 1) or `opposing` (matchedTolerance > 1) |
 | `is_matched` | Boolean: is this the matched/discussed question? |
 | `partner_response` | Partner's actual response to this question |
 | `question_type` | Category: `observed` (matched), `same_domain`, or `different_domain` |
 
 ### `messages.csv`
+
 Conversation transcripts from the chat condition.
 
 | Column | Description |
@@ -65,4 +69,5 @@ Conversation transcripts from the chat condition.
 | `start_time` | Conversation start time |
 
 ### `llm_results/`
+
 Pre-computed LLM (Gemini) prediction results for supplementary analyses.

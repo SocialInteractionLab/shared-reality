@@ -41,4 +41,5 @@ COLORS = {
     'same': '#A23B72',
     'diff': '#95a5a6',
 }
-lowhigh_palette = ['#648FFF', '#DC267F']
+# Stance palette: opposing (blue), shared (pink)
+stance_palette = ['#648FFF', '#DC267F']

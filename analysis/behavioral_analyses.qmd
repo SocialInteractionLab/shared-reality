@@ -1,6 +1,6 @@
 ---
 title: "Commonality Inference: Paper Analyses"
-author: "Reproducibility Code"
+author: "https://github.com/SocialInteractionLab/shared-reality"
 format:
   html:
     code-fold: true
@@ -10,12 +10,10 @@ engine: knitr
 execute:
   warning: false
   message: false
-  cache: true
 knitr:
   opts_chunk:
     message: false
     warning: false
-    cache: true
 ---
 
 This document reproduces all behavioral analyses and figures from the paper.
@@ -70,7 +68,8 @@ data_dir = base_dir / 'data'
 figures_dir = base_dir / 'outputs' / 'figures'
 figures_dir.mkdir(parents=True, exist_ok=True)
 
-lowhigh_palette = ['#648FFF', '#DC267F']  # low (blue), high (pink)
+# Stance palette: opposing (blue), shared (pink)
+stance_palette = ['#648FFF', '#DC267F']
 print(f'Data directory: {data_dir}')
 ```
 
@@ -118,8 +117,7 @@ print('=== Manipulation Check: P(judged shared) on FOCAL question ===\n')
 
 # 2x2 table
 print('                        Actual Stance')
-print('                   Shared          Opposing')
-print('Interaction    (high-match)     (low-match)')
+print('Interaction        Shared          Opposing')
 print('-' * 50)
 
 manip_results = []
@@ -373,7 +371,8 @@ base_dir = Path.cwd().resolve()
 while base_dir.name and not (base_dir / 'data').exists():
     base_dir = base_dir.parent
 figures_dir = base_dir / 'outputs' / 'figures'
-lowhigh_palette = ['#648FFF', '#DC267F']
+# Stance palette: opposing (blue), shared (pink)
+stance_palette = ['#648FFF', '#DC267F']
 SAVE_FIGURES = True  # Save figures when running
 df_pd = pd.read_csv('/tmp/main_df.csv', low_memory=False)
 
