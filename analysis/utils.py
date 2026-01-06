@@ -45,7 +45,7 @@ def get_rates(df: pd.DataFrame, col: str) -> dict:
         Dict mapping (question_type, match_type) -> mean rate
     """
     rates = {}
-    for qt in ['observed', 'same_domain', 'different_domain']:
+    for qt in ['observed', 'same_domain', 'diff_domain']:
         for mt in ['high', 'low']:
             cell = df[(df['question_type'] == qt) & (df['match_type'] == mt)]
             rates[(qt, mt)] = cell[col].mean() if len(cell) > 0 else np.nan
@@ -67,7 +67,7 @@ def compute_gradient(df: pd.DataFrame, col: str = 'pred_prob') -> float:
         Gradient value (positive = stronger same-domain effects)
     """
     rates = {}
-    for qt in ['same_domain', 'different_domain']:
+    for qt in ['same_domain', 'diff_domain']:
         for mt in ['high', 'low']:
             cell = df[(df['question_type'] == qt) & (df['match_type'] == mt)]
             rates[(qt, mt)] = cell[col].mean() if len(cell) > 0 else np.nan
@@ -76,7 +76,7 @@ def compute_gradient(df: pd.DataFrame, col: str = 'pred_prob') -> float:
         return np.nan
 
     return (rates[('same_domain', 'high')] - rates[('same_domain', 'low')]) - \
-           (rates[('different_domain', 'high')] - rates[('different_domain', 'low')])
+           (rates[('diff_domain', 'high')] - rates[('diff_domain', 'low')])
 
 
 # =============================================================================
@@ -141,14 +141,14 @@ def bootstrap_rates(
 
     boot_rates = {
         (qt, mt): []
-        for qt in ['observed', 'same_domain', 'different_domain']
+        for qt in ['observed', 'same_domain', 'diff_domain']
         for mt in ['high', 'low']
     }
 
     for _ in range(n_boot):
         boot_pids = np.random.choice(pids, size=len(pids), replace=True)
         boot_df = df[df['pid'].isin(boot_pids)]
-        for qt in ['observed', 'same_domain', 'different_domain']:
+        for qt in ['observed', 'same_domain', 'diff_domain']:
             for mt in ['high', 'low']:
                 cell = boot_df[(boot_df['question_type'] == qt) &
                                (boot_df['match_type'] == mt)]
