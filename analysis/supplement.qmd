@@ -107,7 +107,7 @@ Interaction type moderated this relationship ($\beta = -0.32$, 95% CI $[-0.36, -
 
 ```{python}
 #| label: fig-distance-commonality
-#| fig-cap: "Commonality expectations as a function of predicted distance between partner and self responses. Participants expected less commonality as the predicted distance increased. Chat participants (right) maintained higher commonality expectations than observation-only participants (left) across all distance levels. Fill color indicates stance condition (pink = shared, blue = opposing). Error bars are 95% bootstrapped confidence intervals."
+#| fig-cap: "Commonality expectations as a function of predicted distance between partner and self responses. Participants expected less commonality as the predicted distance increased. Real interaction participants (right) maintained higher commonality expectations than imagined interaction participants (left) across all distance levels. Fill color indicates stance condition (pink = shared, blue = opposing). Error bars are 95% bootstrapped confidence intervals."
 #| fig-width: 10
 #| fig-height: 5
 
@@ -495,7 +495,7 @@ for k_val in [1, 5, 35]:
 
 To assess whether people blend Bayesian and egocentric strategies, we fit a mixture weight $\lambda \in [0, 1]$ that interpolates between the pure Bayesian model ($\lambda = 0$) and pure egocentric model ($\lambda = 1$):
 
-$$P(\text{match}) = (1 - \lambda) \cdot P_{\text{Bayesian}}(\text{match}) + \lambda \cdot P_{\text{egocentric}}(\text{match})$$
+$$P(\text{Expect Commonality}) = (1 - \lambda) \cdot P_{\text{Bayesian}}(\text{Expect Commonality}) + \lambda \cdot P_{\text{egocentric}}(\text{Expect Commonality})$$
 
 Performance degraded monotonically as $\lambda$ increased. The pure Bayesian model substantially outperformed all alternatives. There was no evidence that adding egocentric projection improved upon pure Bayesian inference.
 
@@ -788,7 +788,7 @@ plt.show()
 
 ## Domain-Specific Regression Results {#sec-domain-models}
 
-@tbl-domain-models presents the full results of the 42 logistic regression models examining the effect of real vs. imagined interaction on commonality expectations, broken down by focal domain, generalization type, and stance condition. Positive coefficients indicate that conversation increased commonality expectations relative to observation-only.
+@tbl-domain-models presents the full results of the 42 logistic regression models examining the effect of real vs. imagined interaction on commonality expectations, broken down by focal domain, generalization type, and stance condition. Positive coefficients indicate that real interaction increased commonality expectations relative to imagined interaction.
 
 ```{python}
 #| output: false

@@ -107,7 +107,7 @@ df_pd.to_csv('/tmp/main_df.csv', index=False)
 
 ## 2. Manipulation Check
 
-Participants should accurately perceive agreement/disagreement on the focal topic. Paper reports the 2×2 breakdown: "judging it as shared far more often when they actually agreed (79% observation-only, 89% chat) than when they disagreed (19% observation-only, 38% chat)."
+Participants should accurately perceive agreement/disagreement on the focal topic. Paper reports the 2×2 breakdown: "judging it as as a commonality far more often when they actually agreed (79% imagined, 89% real) than when they disagreed (19% imagined, 38% real)."
 
 ```{python}
 # Filter to observed/focal question only
@@ -276,10 +276,10 @@ legend_elements = [
     Patch(facecolor=PINK, alpha=0.8, label='Shared'),
     Patch(facecolor=BLUE, alpha=0.8, label='Opposing'),
     Line2D([0], [0], marker='o', color='w', markerfacecolor='black',
-           markeredgecolor='black', markersize=8, linestyle='None', label='Chat'),
+           markeredgecolor='black', markersize=8, linestyle='None', label='Real'),
     Line2D([0], [0], marker='o', color='w', markerfacecolor='white',
            markeredgecolor='black', markeredgewidth=1.5, markersize=8,
-           linestyle='None', label='No chat'),
+           linestyle='None', label='Imagined'),
 ]
 ax.legend(handles=legend_elements, loc='upper right')
 
@@ -409,12 +409,12 @@ for col_idx, stance in enumerate(['opposing', 'shared']):
     pivot = merged.pivot(index='domain_cap', columns='category', values='diff')
     pivot = pivot.reindex(index=domain_order, columns=category_order)
     sns.heatmap(pivot, ax=ax, cmap='RdBu_r', center=0, vmin=-0.3, vmax=0.3, cbar=(col_idx == 1),
-                cbar_kws={'label': 'Chat - No-Chat'} if col_idx == 1 else {})
+                cbar_kws={'label': 'Real - Imagined'} if col_idx == 1 else {})
     ax.set_xticklabels(category_labels, rotation=45, ha='right')
     ax.set_ylabel('Domain' if col_idx == 0 else '')
 
-axes[0, 0].text(-0.3, 0.5, 'Chat', transform=axes[0, 0].transAxes, fontweight='bold', va='center', rotation=90)
-axes[1, 0].text(-0.3, 0.5, 'No-Chat', transform=axes[1, 0].transAxes, fontweight='bold', va='center', rotation=90)
+axes[0, 0].text(-0.3, 0.5, 'Real', transform=axes[0, 0].transAxes, fontweight='bold', va='center', rotation=90)
+axes[1, 0].text(-0.3, 0.5, 'Imagined', transform=axes[1, 0].transAxes, fontweight='bold', va='center', rotation=90)
 axes[2, 0].text(-0.3, 0.5, 'Contrast', transform=axes[2, 0].transAxes, fontweight='bold', va='center', rotation=90)
 
 plt.tight_layout()
