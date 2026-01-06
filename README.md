@@ -40,6 +40,13 @@ Rscript -e "install.packages(c('lme4', 'lmerTest', 'reticulate'))"
 
 ## Reproducing Analyses
 
+Some notebooks use R's `reticulate` package to run Python code. To ensure R uses the correct Python environment, set the `RETICULATE_PYTHON` environment variable:
+
+```bash
+# Set Python path for R/reticulate (adjust path if needed)
+export RETICULATE_PYTHON=$(pwd)/.venv/bin/python
+```
+
 ### Computational model (Figure 4)
 
 ```bash
@@ -55,6 +62,15 @@ quarto render analysis/behavioral_analyses.qmd
 ### Supplement
 
 ```bash
+quarto render analysis/supplement.qmd
+```
+
+### Run all notebooks
+
+```bash
+export RETICULATE_PYTHON=$(pwd)/.venv/bin/python
+quarto render analysis/model_analyses.qmd
+quarto render analysis/behavioral_analyses.qmd
 quarto render analysis/supplement.qmd
 ```
 
