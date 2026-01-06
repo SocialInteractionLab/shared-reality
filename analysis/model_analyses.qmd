@@ -371,24 +371,20 @@ for cat in ['matched', 'same_domain', 'different_domain']:
 
 # Load timecourse data
 pshared_df = pd.read_csv(base_dir / 'data' / 'llm_results' / 'pshared_timecourse.csv')
-pshared_hl = pshared_df[pshared_df['match_type'].isin(['high', 'low'])].copy()
+pshared_hl = pshared_df[pshared_df['stance'].isin(['shared', 'opposing'])].copy()
 
 # Compute means
 timecourse = pshared_hl.groupby(
-    ['time_bin', 'bin_seconds', 'match_type', 'question_category']
+    ['time_bin', 'bin_seconds', 'stance', 'question_category']
 )['predicted_agreement'].mean().reset_index()
 
-# Human rates for comparison (using stance from responses.csv)
+# Human rates for comparison
 chat_data = data[data['experiment'] == 'chat'].copy()
-human_rates_by_stance = {}
+human_rates = {}
 for stance in ['shared', 'opposing']:
     for qt in ['observed', 'same_domain', 'different_domain']:
         subset = chat_data[(chat_data['stance'] == stance) & (chat_data['question_type'] == qt)]
-        human_rates_by_stance[(stance, qt)] = subset['participant_binary_prediction'].mean()
-
-# Map to LLM match_type names for plotting
-human_rates = {('high', qt): human_rates_by_stance[('shared', qt)] for qt in ['observed', 'same_domain', 'different_domain']}
-human_rates.update({('low', qt): human_rates_by_stance[('opposing', qt)] for qt in ['observed', 'same_domain', 'different_domain']})
+        human_rates[(stance, qt)] = subset['participant_binary_prediction'].mean()
 
 # Plot
 fig, axes = plt.subplots(1, 2, figsize=(9, 4), sharey=True)
@@ -400,15 +396,15 @@ cat_styles = {
 }
 cat_to_human = {'matched': 'observed', 'same_domain': 'same_domain', 'different_domain': 'different_domain'}
 
-for ax, (mt, title) in zip(axes, [('high', 'Shared Stance'), ('low', 'Opposing Stance')]):
+for ax, (stance, title) in zip(axes, [('shared', 'Shared Stance'), ('opposing', 'Opposing Stance')]):
     for cat in ['matched', 'same_domain', 'different_domain']:
-        subset = timecourse[(timecourse['match_type'] == mt) & (timecourse['question_category'] == cat)]
+        subset = timecourse[(timecourse['stance'] == stance) & (timecourse['question_category'] == cat)]
         style = cat_styles[cat]
         ax.plot(subset['bin_seconds'], subset['predicted_agreement'],
                 color=style['color'], linewidth=style['lw'],
                 marker=style['marker'], markersize=style['ms'], label=style['label'])
         # Human dashed line
-        ax.axhline(human_rates[(mt, cat_to_human[cat])], color=style['color'],
+        ax.axhline(human_rates[(stance, cat_to_human[cat])], color=style['color'],
                    linestyle='--', linewidth=1.5, alpha=0.7)
 
     ax.set_xlabel('Conversation time (s)')

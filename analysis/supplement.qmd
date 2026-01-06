@@ -904,41 +904,38 @@ data_dir = base_dir / 'data'
 
 # Load P(shared) timecourse - use final time bin
 pshared_df = pd.read_csv(llm_dir / 'pshared_timecourse.csv')
-pshared_hl = pshared_df[pshared_df['match_type'].isin(['high', 'low'])]
+pshared_hl = pshared_df[pshared_df['stance'].isin(['shared', 'opposing'])]
 final_bin = pshared_hl['time_bin'].max()
 pshared_final = pshared_hl[pshared_hl['time_bin'] == final_bin]
 
 # Compute LLM P(shared) by stance and question category
 llm_pshared = {}
-for mt in ['high', 'low']:
+for stance in ['shared', 'opposing']:
     for cat in ['matched', 'same_domain', 'different_domain']:
-        subset = pshared_final[(pshared_final['match_type'] == mt) &
+        subset = pshared_final[(pshared_final['stance'] == stance) &
                                (pshared_final['question_category'] == cat)]
         if len(subset) > 0:
-            llm_pshared[(mt, cat)] = subset['predicted_agreement'].mean()
+            llm_pshared[(stance, cat)] = subset['predicted_agreement'].mean()
 
 # Load human behavioral data for comparison
 responses_df = pd.read_csv(data_dir / 'responses.csv', low_memory=False)
 chat_data = responses_df[responses_df['experiment'] == 'chat']
 
 # Compute human P(shared) by stance and question type
-# Note: LLM data uses high/low, but responses.csv now uses stance (shared/opposing)
 human_pshared = {}
 cat_to_qt = {'matched': 'observed', 'same_domain': 'same_domain', 'different_domain': 'different_domain'}
-mt_to_stance = {'high': 'shared', 'low': 'opposing'}
-for mt in ['high', 'low']:
-    stance = mt_to_stance[mt]
+for stance in ['shared', 'opposing']:
     for cat, qt in cat_to_qt.items():
         subset = chat_data[(chat_data['stance'] == stance) & (chat_data['question_type'] == qt)]
         if len(subset) > 0:
-            human_pshared[(mt, cat)] = subset['participant_binary_prediction'].mean()
+            human_pshared[(stance, cat)] = subset['participant_binary_prediction'].mean()
 
 # Create table matching LaTeX format
 rows = []
-for mt, stance_label in [('high', 'Shared'), ('low', 'Opposing')]:
+for stance, stance_label in [('shared', 'Shared'), ('opposing', 'Opposing')]:
     for cat, cat_label in [('matched', 'Focal (discussed)'), ('same_domain', 'Same domain'), ('different_domain', 'Different domain')]:
-        llm_val = llm_pshared.get((mt, cat), float('nan'))
-        human_val = human_pshared.get((mt, cat), float('nan'))
+        llm_val = llm_pshared.get((stance, cat), float('nan'))
+        human_val = human_pshared.get((stance, cat), float('nan'))
         rows.append({
             'Stance': stance_label,
             'Question Type': cat_label,
