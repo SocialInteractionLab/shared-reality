@@ -38,3 +38,6 @@ analysis/*.pdf
 latex/
 outputs/
 /scripts
+
+# Internal documentation (not for repo)
+docs/
