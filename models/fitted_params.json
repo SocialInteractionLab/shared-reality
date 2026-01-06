@@ -101,8 +101,8 @@
     "observed_opposing": 0.18996415770609318,
     "same_domain_shared": 0.602,
     "same_domain_opposing": 0.41397849462365593,
-    "diff_domain_shared": 0.5333333333333333,
-    "diff_domain_opposing": 0.46833930704898447
+    "different_domain_shared": 0.5333333333333333,
+    "different_domain_opposing": 0.46833930704898447
   },
   "data_subset": "no-chat"
 }

@@ -500,16 +500,16 @@ def compute_gradient_error(pred_df: pd.DataFrame, human_rates: dict) -> float:
     Uses stance (shared/opposing) derived from matchedTolerance.
     """
     model_rates = {}
-    for qt in ['same_domain', 'diff_domain']:
+    for qt in ['same_domain', 'different_domain']:
         for stance in ['shared', 'opposing']:
             cell = pred_df[(pred_df["question_type"] == qt) & (pred_df["stance"] == stance)]
             model_rates[(qt, stance)] = cell["pred_prob"].mean() if len(cell) else 0.5
 
     model_gradient = (model_rates[('same_domain', 'shared')] - model_rates[('same_domain', 'opposing')]) - \
-                     (model_rates[('diff_domain', 'shared')] - model_rates[('diff_domain', 'opposing')])
+                     (model_rates[('different_domain', 'shared')] - model_rates[('different_domain', 'opposing')])
 
     human_gradient = (human_rates[('same_domain', 'shared')] - human_rates[('same_domain', 'opposing')]) - \
-                     (human_rates[('diff_domain', 'shared')] - human_rates[('diff_domain', 'opposing')])
+                     (human_rates[('different_domain', 'shared')] - human_rates[('different_domain', 'opposing')])
 
     return abs(model_gradient - human_gradient)
 

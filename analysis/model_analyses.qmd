@@ -138,12 +138,12 @@ qt_labels = ['Observed', 'Same\nDomain', 'Different\nDomain']
 x = np.arange(len(qt_keys))
 width = 0.35
 
-for i, mt in enumerate(['low', 'high']):
-    offset = -width/2 if mt == 'low' else width/2
-    rates = [model_rates[(qt, mt)] for qt in qt_keys]
-    yerr = [[model_rates[(qt, mt)] - rate_cis[(qt, mt)][0] for qt in qt_keys],
-            [rate_cis[(qt, mt)][1] - model_rates[(qt, mt)] for qt in qt_keys]]
-    ax.bar(x + offset, rates, width, color=COLORS[mt], label=f'{mt.capitalize()} match',
+for i, stance in enumerate(['opposing', 'shared']):
+    offset = -width/2 if stance == 'opposing' else width/2
+    rates = [model_rates[(qt, stance)] for qt in qt_keys]
+    yerr = [[model_rates[(qt, stance)] - rate_cis[(qt, stance)][0] for qt in qt_keys],
+            [rate_cis[(qt, stance)][1] - model_rates[(qt, stance)] for qt in qt_keys]]
+    ax.bar(x + offset, rates, width, color=COLORS[stance], label=f'{stance.capitalize()} stance',
            yerr=yerr, capsize=0, error_kw={'linewidth': 1.5})
 
 ax.set_xticks(x)
@@ -174,15 +174,15 @@ for domain in DOMAIN_RANGES.keys():
                               (nochat_preds['question_type'] == qt)]
         if len(subset) == 0:
             continue
-        high = subset[subset['match_type'] == 'high']
-        low = subset[subset['match_type'] == 'low']
-        if len(high) == 0 or len(low) == 0:
+        shared = subset[subset['stance'] == 'shared']
+        opposing = subset[subset['stance'] == 'opposing']
+        if len(shared) == 0 or len(opposing) == 0:
             continue
         domain_data.append({
             'domain': domain,
             'question_type': qt,
-            'model_effect': high['pred_prob'].mean() - low['pred_prob'].mean(),
-            'human_effect': high['actual'].mean() - low['actual'].mean()
+            'model_effect': shared['pred_prob'].mean() - opposing['pred_prob'].mean(),
+            'human_effect': shared['actual'].mean() - opposing['actual'].mean()
         })
 
 domain_df = pd.DataFrame(domain_data)
@@ -298,12 +298,12 @@ fig, axes = plt.subplots(1, 3, figsize=(12, 4))
 
 # Panel A
 ax = axes[0]
-for i, mt in enumerate(['low', 'high']):
-    offset = -width/2 if mt == 'low' else width/2
-    rates = [model_rates[(qt, mt)] for qt in qt_keys]
-    yerr = [[model_rates[(qt, mt)] - rate_cis[(qt, mt)][0] for qt in qt_keys],
-            [rate_cis[(qt, mt)][1] - model_rates[(qt, mt)] for qt in qt_keys]]
-    ax.bar(x + offset, rates, width, color=COLORS[mt], label=f'{mt.capitalize()} match',
+for i, stance in enumerate(['opposing', 'shared']):
+    offset = -width/2 if stance == 'opposing' else width/2
+    rates = [model_rates[(qt, stance)] for qt in qt_keys]
+    yerr = [[model_rates[(qt, stance)] - rate_cis[(qt, stance)][0] for qt in qt_keys],
+            [rate_cis[(qt, stance)][1] - model_rates[(qt, stance)] for qt in qt_keys]]
+    ax.bar(x + offset, rates, width, color=COLORS[stance], label=f'{stance.capitalize()} stance',
            yerr=yerr, capsize=0, error_kw={'linewidth': 1.5})
 ax.set_xticks(x)
 ax.set_xticklabels(qt_labels)
@@ -378,13 +378,17 @@ timecourse = pshared_hl.groupby(
     ['time_bin', 'bin_seconds', 'match_type', 'question_category']
 )['predicted_agreement'].mean().reset_index()
 
-# Human rates for comparison
+# Human rates for comparison (using stance from responses.csv)
 chat_data = data[data['experiment'] == 'chat'].copy()
-human_rates = {}
-for mt in ['high', 'low']:
+human_rates_by_stance = {}
+for stance in ['shared', 'opposing']:
     for qt in ['observed', 'same_domain', 'different_domain']:
-        subset = chat_data[(chat_data['match_type'] == mt) & (chat_data['question_type'] == qt)]
-        human_rates[(mt, qt)] = subset['participant_binary_prediction'].mean()
+        subset = chat_data[(chat_data['stance'] == stance) & (chat_data['question_type'] == qt)]
+        human_rates_by_stance[(stance, qt)] = subset['participant_binary_prediction'].mean()
+
+# Map to LLM match_type names for plotting
+human_rates = {('high', qt): human_rates_by_stance[('shared', qt)] for qt in ['observed', 'same_domain', 'different_domain']}
+human_rates.update({('low', qt): human_rates_by_stance[('opposing', qt)] for qt in ['observed', 'same_domain', 'different_domain']})
 
 # Plot
 fig, axes = plt.subplots(1, 2, figsize=(9, 4), sharey=True)

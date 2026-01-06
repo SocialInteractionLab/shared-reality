@@ -158,7 +158,7 @@ def compute_question_type(row):
     elif row['preChatDomain'] == row['matchedDomain']:
         return 'same_domain'
     else:
-        return 'diff_domain'
+        return 'different_domain'
 
 
 def load_srgi_scores():
