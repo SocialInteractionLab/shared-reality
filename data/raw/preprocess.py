@@ -214,11 +214,12 @@ def create_responses_csv(chat_df, nochat_df):
         'matchedTolerance', 'experiment'
     ]
 
-    # Chat has groupId and partner_response
+    # Chat has groupId and partner_response, but no observedResponse
     chat_subset = chat_df[cols + ['groupId', 'partner_response']].copy()
+    chat_subset['observedResponse'] = np.nan  # Chat infers from conversation, no explicit observation
 
-    # No-chat needs empty groupId and NaN partner_response
-    nochat_subset = nochat_df[cols].copy()
+    # No-chat has observedResponse (ground truth shown to participant), but no partner_response
+    nochat_subset = nochat_df[cols + ['observedResponse']].copy()
     nochat_subset['groupId'] = ''
     nochat_subset['partner_response'] = np.nan
 

@@ -447,15 +447,20 @@ def prepare_evaluation_data(data: pd.DataFrame) -> dict:
 
         # Use perceived response for chat, ground truth for no-chat
         experiment = subj["experiment"].iloc[0]
+        obs_row = subj[subj["question_type"] == "observed"]
+        if len(obs_row) == 0:
+            continue
+
         if experiment == "chat":
-            # Listener's perception of partner's response (from observed question row)
-            obs_row = subj[subj["question_type"] == "observed"]
-            if len(obs_row) == 0:
-                continue
+            # Chat: listener's perception of partner's response (inferred from conversation)
             r_partner = obs_row["postChatResponse"].iloc[0]
         else:
-            # No-chat: direct observation, so use ground truth
-            r_partner = matched["partner_response"].iloc[0]
+            # No-chat: ground truth shown to participant (explicit observation)
+            r_partner = obs_row["observedResponse"].iloc[0]
+            # Alternative: use participant's reported perception (postChatResponse)
+            # This would be more consistent with chat (both use perception),
+            # but ~10% of no-chat participants report different values than shown.
+            # r_partner = obs_row["postChatResponse"].iloc[0]
 
         if pd.isna(r_partner):
             continue
