@@ -158,7 +158,7 @@ def compute_question_type(row):
     elif row['preChatDomain'] == row['matchedDomain']:
         return 'same_domain'
     else:
-        return 'diff_domain'
+        return 'different_domain'
 
 
 def load_srgi_scores():
@@ -214,11 +214,12 @@ def create_responses_csv(chat_df, nochat_df):
         'matchedTolerance', 'experiment'
     ]
 
-    # Chat has groupId and partner_response
+    # Chat has groupId and partner_response, but no observedResponse
     chat_subset = chat_df[cols + ['groupId', 'partner_response']].copy()
+    chat_subset['observedResponse'] = np.nan  # Chat infers from conversation, no explicit observation
 
-    # No-chat needs empty groupId and NaN partner_response
-    nochat_subset = nochat_df[cols].copy()
+    # No-chat has observedResponse (ground truth shown to participant), but no partner_response
+    nochat_subset = nochat_df[cols + ['observedResponse']].copy()
     nochat_subset['groupId'] = ''
     nochat_subset['partner_response'] = np.nan
 
@@ -232,6 +233,14 @@ def create_responses_csv(chat_df, nochat_df):
     # Compatibility columns (same data, different names for legacy code)
     combined['participant_binary_prediction'] = combined['predictShared']
     combined['match_type'] = combined['matchType'].str.lower()
+
+    # Stance: derived from matchedTolerance (actual observed agreement, not experimental condition)
+    # matchedTolerance <= 1 means responses within 1 point = shared stance
+    # matchedTolerance > 1 means responses differ by >1 point = opposing stance
+    # This recodes ALL conditions (including random) based on actual observed stance
+    combined['stance'] = combined['matchedTolerance'].apply(
+        lambda x: 'shared' if x <= 1 else 'opposing'
+    )
 
     # Join SRGI scores
     srgi = load_srgi_scores()
@@ -266,12 +275,9 @@ def validate(df):
     print(f"Total participants: {df['pid'].nunique()}")
     print(f"Total rows: {len(df)}")
 
-    # Stance distribution (computed for display, not saved)
-    stance = df['matchedTolerance'].apply(lambda x: 'opposing' if x > 1 else 'shared')
+    # Stance distribution (now saved in the data)
     print(f"\n=== STANCE DISTRIBUTION ===")
-    stance_df = df.copy()
-    stance_df['stance'] = stance
-    stance_counts = stance_df.groupby(['experiment', 'stance'])['pid'].nunique()
+    stance_counts = df.groupby(['experiment', 'stance'])['pid'].nunique()
     print(stance_counts)
 
 

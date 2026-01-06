@@ -292,19 +292,16 @@ def compute_pshared_metrics(results: list) -> pd.DataFrame:
     unified = load_unified_data()
     questions = load_questions()
 
-    # Load responses to get matchedTolerance for stance recoding
+    # Load responses - stance column is already computed in preprocessing
     responses_df = pd.read_csv(DATA_DIR / "responses.csv", low_memory=False)
     responses_chat = responses_df[responses_df['experiment'] == 'chat'].copy()
 
-    # Build stance lookup: groupId -> stance (based on matchedTolerance <= 1)
-    # 'high' = high match (shared stance), 'low' = low match (opposing stance)
-    # This recodes all conditions (including random) based on actual matched tolerance
+    # Build stance lookup from pre-computed stance column
     stance_lookup = {}
     for group_id in responses_chat['groupId'].unique():
         group_resp = responses_chat[responses_chat['groupId'] == group_id]
         if len(group_resp) > 0:
-            matched_tol = group_resp['matchedTolerance'].iloc[0]
-            stance_lookup[group_id] = 'high' if matched_tol <= 1 else 'low'
+            stance_lookup[group_id] = group_resp['stance'].iloc[0]
 
     unified_chat = unified[unified['experiment'] == 'chat'].copy()
 
@@ -316,12 +313,12 @@ def compute_pshared_metrics(results: list) -> pd.DataFrame:
         dog_msgs = group_msgs[group_msgs['author'] == '🐶']
         if len(cat_msgs) == 0 or len(dog_msgs) == 0:
             continue
-        # Use recoded stance based on matchedTolerance, not raw match_type
+        # Use stance column from responses.csv (derived from matchedTolerance)
         stance = stance_lookup.get(group_id, 'unknown')
         group_meta[group_id] = {
             'cat_pid': cat_msgs['prolific_id'].iloc[0],
             'dog_pid': dog_msgs['prolific_id'].iloc[0],
-            'match_type': stance,
+            'stance': stance,
         }
 
     # Build response lookup
@@ -394,7 +391,7 @@ def compute_pshared_metrics(results: list) -> pd.DataFrame:
                 'time_bin': time_bin,
                 'bin_seconds': time_bin * 15,
                 'question': q_num,
-                'match_type': meta['match_type'],
+                'stance': meta['stance'],
                 'question_category': category,
                 'question_domain': q_domain,
                 'predicted_agreement': float(pred_agreement),

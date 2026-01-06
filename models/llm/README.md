@@ -126,7 +126,7 @@ llm/
 | group_id | Conversation group identifier |
 | time_bin | 15-second time bin (0-12) |
 | question | Question number (1-35) |
-| match_type | high/low (based on initial response similarity) |
+| stance | shared/opposing (based on matchedTolerance ≤1 or >1) |
 | question_category | matched/same_domain/different_domain |
 | predicted_agreement | LLM's predicted P(agree) |
 | actual_agreement | True if responses within 1 point |

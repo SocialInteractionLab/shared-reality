@@ -17,8 +17,8 @@ DOMAIN_RANGES = {
 
 # Standard color palette (consistent across figures)
 COLORS = {
-    'low': '#648FFF',       # Blue (opposing/low-match)
-    'high': '#DC267F',      # Pink (shared/high-match)
+    'opposing': '#648FFF',  # Blue (opposing stance)
+    'shared': '#DC267F',    # Pink (shared stance)
     'human': '#2c3e50',     # Dark gray
     'bayesian': '#648FFF',  # Blue
     'egocentric': '#e07a5f',  # Muted coral
@@ -35,32 +35,32 @@ COLORS = {
 
 def get_rates(df: pd.DataFrame, col: str) -> dict:
     """
-    Compute mean rates by question_type × match_type.
+    Compute mean rates by question_type × stance.
 
     Args:
-        df: DataFrame with 'question_type', 'match_type', and value columns
+        df: DataFrame with 'question_type', 'stance', and value columns
         col: Column name to aggregate (e.g., 'pred_prob', 'actual')
 
     Returns:
-        Dict mapping (question_type, match_type) -> mean rate
+        Dict mapping (question_type, stance) -> mean rate
     """
     rates = {}
     for qt in ['observed', 'same_domain', 'different_domain']:
-        for mt in ['high', 'low']:
-            cell = df[(df['question_type'] == qt) & (df['match_type'] == mt)]
-            rates[(qt, mt)] = cell[col].mean() if len(cell) > 0 else np.nan
+        for stance in ['shared', 'opposing']:
+            cell = df[(df['question_type'] == qt) & (df['stance'] == stance)]
+            rates[(qt, stance)] = cell[col].mean() if len(cell) > 0 else np.nan
     return rates
 
 
 def compute_gradient(df: pd.DataFrame, col: str = 'pred_prob') -> float:
     """
-    Compute the generalization gradient: (same_high - same_low) - (diff_high - diff_low).
+    Compute the generalization gradient: (same_shared - same_opposing) - (diff_shared - diff_opposing).
 
     This measures domain-specific transfer: how much more does agreement/disagreement
     affect same-domain questions vs. different-domain questions.
 
     Args:
-        df: DataFrame with 'question_type', 'match_type', and value columns
+        df: DataFrame with 'question_type', 'stance', and value columns
         col: Column name to aggregate
 
     Returns:
@@ -68,15 +68,15 @@ def compute_gradient(df: pd.DataFrame, col: str = 'pred_prob') -> float:
     """
     rates = {}
     for qt in ['same_domain', 'different_domain']:
-        for mt in ['high', 'low']:
-            cell = df[(df['question_type'] == qt) & (df['match_type'] == mt)]
-            rates[(qt, mt)] = cell[col].mean() if len(cell) > 0 else np.nan
+        for stance in ['shared', 'opposing']:
+            cell = df[(df['question_type'] == qt) & (df['stance'] == stance)]
+            rates[(qt, stance)] = cell[col].mean() if len(cell) > 0 else np.nan
 
     if any(pd.isna(v) for v in rates.values()):
         return np.nan
 
-    return (rates[('same_domain', 'high')] - rates[('same_domain', 'low')]) - \
-           (rates[('different_domain', 'high')] - rates[('different_domain', 'low')])
+    return (rates[('same_domain', 'shared')] - rates[('same_domain', 'opposing')]) - \
+           (rates[('different_domain', 'shared')] - rates[('different_domain', 'opposing')])
 
 
 # =============================================================================
@@ -96,7 +96,7 @@ def bootstrap_gradient(
     within-participant correlation structure.
 
     Args:
-        df: DataFrame with 'pid', 'question_type', 'match_type', and value columns
+        df: DataFrame with 'pid', 'question_type', 'stance', and value columns
         col: Column name to aggregate
         n_boot: Number of bootstrap iterations
         seed: Random seed for reproducibility
@@ -128,31 +128,31 @@ def bootstrap_rates(
     Bootstrap confidence intervals for cell rates.
 
     Args:
-        df: DataFrame with 'pid', 'question_type', 'match_type', and value columns
+        df: DataFrame with 'pid', 'question_type', 'stance', and value columns
         col: Column name to aggregate
         n_boot: Number of bootstrap iterations
         seed: Random seed
 
     Returns:
-        Dict mapping (question_type, match_type) -> (lower, upper) CI bounds
+        Dict mapping (question_type, stance) -> (lower, upper) CI bounds
     """
     np.random.seed(seed)
     pids = df['pid'].unique()
 
     boot_rates = {
-        (qt, mt): []
+        (qt, stance): []
         for qt in ['observed', 'same_domain', 'different_domain']
-        for mt in ['high', 'low']
+        for stance in ['shared', 'opposing']
     }
 
     for _ in range(n_boot):
         boot_pids = np.random.choice(pids, size=len(pids), replace=True)
         boot_df = df[df['pid'].isin(boot_pids)]
         for qt in ['observed', 'same_domain', 'different_domain']:
-            for mt in ['high', 'low']:
+            for stance in ['shared', 'opposing']:
                 cell = boot_df[(boot_df['question_type'] == qt) &
-                               (boot_df['match_type'] == mt)]
-                boot_rates[(qt, mt)].append(cell[col].mean() if len(cell) else np.nan)
+                               (boot_df['stance'] == stance)]
+                boot_rates[(qt, stance)].append(cell[col].mean() if len(cell) else np.nan)
 
     return {k: (np.percentile(v, 2.5), np.percentile(v, 97.5))
             for k, v in boot_rates.items()}

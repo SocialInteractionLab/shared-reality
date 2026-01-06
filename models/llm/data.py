@@ -25,7 +25,7 @@ def load_unified_data() -> pd.DataFrame:
 
     Returns:
         DataFrame with columns including experiment, pid, question, own_response,
-        partner_response, match_type, matched_question, is_matched, question_type
+        partner_response, stance, matched_question, is_matched, question_type
     """
     df = pd.read_csv(DATA_DIR / "responses.csv", low_memory=False)
     # Add column aliases for backward compatibility
@@ -71,7 +71,7 @@ def load_nochat_observations() -> pd.DataFrame:
     q_text = questions.set_index('num')['questionText'].to_dict()
     nochat_matched['matched_question_text'] = nochat_matched['matched_question'].map(q_text)
 
-    return nochat_matched[['pid', 'match_type', 'matched_question', 'matched_question_text', 'partner_response']]
+    return nochat_matched[['pid', 'stance', 'matched_question', 'matched_question_text', 'partner_response']]
 
 
 def load_dialogue_data(bin_size: str = "15s") -> pd.DataFrame:

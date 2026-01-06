@@ -24,9 +24,8 @@ knitr:
 ```{r}
 #| label: setup
 #| include: false
-Sys.setenv(RETICULATE_PYTHON = "/Users/rxdh/miniconda3/bin/python3")
+# Use system Python (configure via RETICULATE_PYTHON env var if needed)
 library(reticulate)
-use_python("/Users/rxdh/miniconda3/bin/python3", required = TRUE)
 library(lme4)
 library(lmerTest)
 library(dplyr)
@@ -72,6 +71,16 @@ lowhigh_palette = ['#648FFF', '#DC267F']  # low (blue), high (pink)
 #| label: load-data
 #| include: false
 
+# Re-import (Python state can be lost between chunks with knitr engine)
+import polars as pl
+from polars import col, lit
+from pathlib import Path
+
+base_dir = Path.cwd().resolve()
+while base_dir.name and not (base_dir / 'data').exists():
+    base_dir = base_dir.parent
+data_dir = base_dir / 'data'
+
 # Load pre-merged behavioral data
 df = pl.read_csv(data_dir / 'responses.csv')
 df = df.filter(~col('matchedTolerance').is_null())
@@ -112,6 +121,17 @@ Interaction type moderated this relationship ($\beta = -0.32$, 95% CI $[-0.36, -
 #| fig-cap: "Commonality expectations as a function of predicted distance between partner and self responses. Participants expected less commonality as the predicted distance increased. Chat participants (right) maintained higher commonality expectations than observation-only participants (left) across all distance levels. Fill color indicates stance condition (pink = shared, blue = opposing). Error bars are 95% bootstrapped confidence intervals."
 #| fig-width: 10
 #| fig-height: 5
+
+# Re-import after R chunks (knitr engine loses Python state)
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Load processed data
+inf_df = pd.read_csv('/tmp/df_pd_processed.csv')
+inf_df = inf_df[inf_df['question'] != inf_df['matchedIdx']]
+lowhigh_palette = ['#648FFF', '#DC267F']
 
 # Aggregate by participant first
 inf_grouped = inf_df.groupby(['experiment', 'stance', 'pid', 'distance'])['predictShared'].mean().reset_index()
@@ -225,7 +245,10 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
 
-base_dir = Path('/Users/rxdh/Repos/shared-reality')
+# Find project root (contains data/ directory)
+base_dir = Path.cwd().resolve()
+while base_dir.name and not (base_dir / 'data').exists():
+    base_dir = base_dir.parent
 data_dir = base_dir / 'data'
 figures_dir = base_dir / 'outputs' / 'figures'
 sys.path.insert(0, str(base_dir))
@@ -340,28 +363,39 @@ We evaluated model performance across factor dimensionalities from $k = 1$ (firs
 #| fig-width: 7
 #| fig-height: 5
 
+import json
+import numpy as np
+import pandas as pd
+from pathlib import Path
+
+# Re-establish base_dir after R chunks
+base_dir = Path.cwd().resolve()
+while base_dir.name and not (base_dir / 'data').exists():
+    base_dir = base_dir.parent
+
+import sys
+sys.path.insert(0, str(base_dir))
 from models.model import CommonalityModel, load_evaluation_data
 
 # Load evaluation data
 data = load_evaluation_data()
 nochat_data = data[data['experiment'] == 'no-chat']
 
-# Compute human rates for no-chat condition
+# Compute human rates for no-chat condition (using stance)
 NOCHAT_HUMAN = {}
 for qt in ['same_domain', 'different_domain']:
-    for mt in ['high', 'low']:
-        cell = nochat_data[(nochat_data['question_type'] == qt) & (nochat_data['match_type'] == mt)]
-        NOCHAT_HUMAN[(qt, mt)] = cell['participant_binary_prediction'].mean()
+    for stance in ['shared', 'opposing']:
+        cell = nochat_data[(nochat_data['question_type'] == qt) & (nochat_data['stance'] == stance)]
+        NOCHAT_HUMAN[(qt, stance)] = cell['participant_binary_prediction'].mean()
 
 # Load fitted parameters (same as model_analyses.qmd)
-import json
 params_path = base_dir / 'models' / 'fitted_params.json'
 with open(params_path) as f:
     fitted_cache = json.load(f)
 UNIFIED_PARAMS = {**fitted_cache['unified_params'], 'lambda_mix': 0.0}
 
 # Prepare evaluation data
-nochat_eval = nochat_data[['pid', 'question', 'question_type', 'match_type',
+nochat_eval = nochat_data[['pid', 'question', 'question_type', 'stance',
                             'preChatResponse', 'partner_response', 'matchedIdx',
                             'participant_binary_prediction', 'is_matched', 'experiment']].copy()
 
@@ -385,7 +419,7 @@ def fast_evaluate(model, eval_data):
             results.append({
                 'pid': pid,
                 'question_type': row['question_type'],
-                'match_type': row['match_type'],
+                'stance': row['stance'],
                 'pred_prob': preds[int(row['question']) - 1],
                 'actual': row['participant_binary_prediction'],
             })
@@ -400,14 +434,14 @@ for k in k_values:
     model = CommonalityModel(k=k, **UNIFIED_PARAMS)
     preds = fast_evaluate(model, nochat_eval)
 
-    # Effects by question type and match type
-    same_high = preds[(preds['question_type'] == 'same_domain') & (preds['match_type'] == 'high')]['pred_prob'].mean()
-    same_low = preds[(preds['question_type'] == 'same_domain') & (preds['match_type'] == 'low')]['pred_prob'].mean()
-    diff_high = preds[(preds['question_type'] == 'different_domain') & (preds['match_type'] == 'high')]['pred_prob'].mean()
-    diff_low = preds[(preds['question_type'] == 'different_domain') & (preds['match_type'] == 'low')]['pred_prob'].mean()
+    # Effects by question type and stance
+    same_shared = preds[(preds['question_type'] == 'same_domain') & (preds['stance'] == 'shared')]['pred_prob'].mean()
+    same_opposing = preds[(preds['question_type'] == 'same_domain') & (preds['stance'] == 'opposing')]['pred_prob'].mean()
+    diff_shared = preds[(preds['question_type'] == 'different_domain') & (preds['stance'] == 'shared')]['pred_prob'].mean()
+    diff_opposing = preds[(preds['question_type'] == 'different_domain') & (preds['stance'] == 'opposing')]['pred_prob'].mean()
 
-    same_effect = same_high - same_low
-    diff_effect = diff_high - diff_low
+    same_effect = same_shared - same_opposing
+    diff_effect = diff_shared - diff_opposing
     gradient = same_effect - diff_effect
 
     k_sweep_results.append({
@@ -420,8 +454,8 @@ for k in k_values:
 k_sweep = pd.DataFrame(k_sweep_results)
 
 # Compute human targets
-HUMAN_SAME_NC = NOCHAT_HUMAN[('same_domain', 'high')] - NOCHAT_HUMAN[('same_domain', 'low')]
-HUMAN_DIFF_NC = NOCHAT_HUMAN[('different_domain', 'high')] - NOCHAT_HUMAN[('different_domain', 'low')]
+HUMAN_SAME_NC = NOCHAT_HUMAN[('same_domain', 'shared')] - NOCHAT_HUMAN[('same_domain', 'opposing')]
+HUMAN_DIFF_NC = NOCHAT_HUMAN[('different_domain', 'shared')] - NOCHAT_HUMAN[('different_domain', 'opposing')]
 HUMAN_GRADIENT_NC = HUMAN_SAME_NC - HUMAN_DIFF_NC
 
 k_sweep['gradient_error'] = np.abs(k_sweep['gradient'] - HUMAN_GRADIENT_NC)
@@ -494,12 +528,12 @@ for lam in lambda_values:
     model = CommonalityModel(k=5, lambda_mix=lam, **{k: v for k, v in UNIFIED_PARAMS.items() if k != 'lambda_mix'})
     preds = fast_evaluate(model, nochat_eval)
 
-    same_high = preds[(preds['question_type'] == 'same_domain') & (preds['match_type'] == 'high')]['pred_prob'].mean()
-    same_low = preds[(preds['question_type'] == 'same_domain') & (preds['match_type'] == 'low')]['pred_prob'].mean()
-    diff_high = preds[(preds['question_type'] == 'different_domain') & (preds['match_type'] == 'high')]['pred_prob'].mean()
-    diff_low = preds[(preds['question_type'] == 'different_domain') & (preds['match_type'] == 'low')]['pred_prob'].mean()
+    same_shared = preds[(preds['question_type'] == 'same_domain') & (preds['stance'] == 'shared')]['pred_prob'].mean()
+    same_opposing = preds[(preds['question_type'] == 'same_domain') & (preds['stance'] == 'opposing')]['pred_prob'].mean()
+    diff_shared = preds[(preds['question_type'] == 'different_domain') & (preds['stance'] == 'shared')]['pred_prob'].mean()
+    diff_opposing = preds[(preds['question_type'] == 'different_domain') & (preds['stance'] == 'opposing')]['pred_prob'].mean()
 
-    gradient = (same_high - same_low) - (diff_high - diff_low)
+    gradient = (same_shared - same_opposing) - (diff_shared - diff_opposing)
     lambda_results.append({'lambda': lam, 'gradient': gradient})
 
 lambda_df = pd.DataFrame(lambda_results)
@@ -528,7 +562,10 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-base_dir = Path('/Users/rxdh/Repos/shared-reality')
+# Find project root (contains data/ directory)
+base_dir = Path.cwd().resolve()
+while base_dir.name and not (base_dir / 'data').exists():
+    base_dir = base_dir.parent
 data_dir = base_dir / 'data'
 figures_dir = base_dir / 'outputs' / 'figures'
 
@@ -579,10 +616,10 @@ fig, axes = plt.subplots(1, 2, figsize=(9, 4))
 # Panel A: Distribution
 ax = axes[0]
 ax.hist(all_grads, bins=25, color=COLORS['bayesian'], alpha=0.8, edgecolor='white', linewidth=0.5)
-ax.axvline(q25, color=COLORS['high'], linestyle='--', linewidth=2,
+ax.axvline(q25, color=COLORS['shared'], linestyle='--', linewidth=2,
            label=f'Bottom quartile\n(N={n_anomaly})')
 ax.axvline(0, color='gray', linestyle=':', linewidth=1, alpha=0.7)
-ax.axvspan(min(all_grads) - 0.01, q25, alpha=0.15, color=COLORS['high'])
+ax.axvspan(min(all_grads) - 0.01, q25, alpha=0.15, color=COLORS['shared'])
 ax.set_xlabel('Self-structure gradient\n(within − cross domain similarity)', fontsize=11)
 ax.set_ylabel('Number of participants', fontsize=11)
 ax.set_title('A', fontweight='bold', loc='left', fontsize=14)
@@ -598,7 +635,7 @@ anomaly_err = [[anomaly_gradient - np.percentile(anomaly_boots, 2.5)],
 
 ax.bar([0], [normal_gradient], width=width, color=COLORS['bayesian'],
        yerr=normal_err, capsize=4, error_kw={'linewidth': 1.5})
-ax.bar([1], [anomaly_gradient], width=width, color=COLORS['high'],
+ax.bar([1], [anomaly_gradient], width=width, color=COLORS['shared'],
        yerr=anomaly_err, capsize=4, error_kw={'linewidth': 1.5})
 ax.axhline(0, color='gray', linestyle='--', linewidth=1, alpha=0.7)
 
@@ -653,10 +690,10 @@ To verify that model performance depends on veridical belief structure, we compa
 model_actual = CommonalityModel(k=5, **UNIFIED_PARAMS)
 preds_actual = fast_evaluate(model_actual, nochat_eval)
 actual_gradient = (
-    (preds_actual[(preds_actual['question_type'] == 'same_domain') & (preds_actual['match_type'] == 'high')]['pred_prob'].mean() -
-     preds_actual[(preds_actual['question_type'] == 'same_domain') & (preds_actual['match_type'] == 'low')]['pred_prob'].mean()) -
-    (preds_actual[(preds_actual['question_type'] == 'different_domain') & (preds_actual['match_type'] == 'high')]['pred_prob'].mean() -
-     preds_actual[(preds_actual['question_type'] == 'different_domain') & (preds_actual['match_type'] == 'low')]['pred_prob'].mean())
+    (preds_actual[(preds_actual['question_type'] == 'same_domain') & (preds_actual['stance'] == 'shared')]['pred_prob'].mean() -
+     preds_actual[(preds_actual['question_type'] == 'same_domain') & (preds_actual['stance'] == 'opposing')]['pred_prob'].mean()) -
+    (preds_actual[(preds_actual['question_type'] == 'different_domain') & (preds_actual['stance'] == 'shared')]['pred_prob'].mean() -
+     preds_actual[(preds_actual['question_type'] == 'different_domain') & (preds_actual['stance'] == 'opposing')]['pred_prob'].mean())
 )
 
 # Scrambled loadings control
@@ -670,12 +707,12 @@ for seed in range(100):
     m = CommonalityModel(k=5, lambda_mix=0.0, loadings=real_loadings[perm, :], **params)
     preds = fast_evaluate(m, nochat_eval)
 
-    same_high = preds[(preds['question_type'] == 'same_domain') & (preds['match_type'] == 'high')]['pred_prob'].mean()
-    same_low = preds[(preds['question_type'] == 'same_domain') & (preds['match_type'] == 'low')]['pred_prob'].mean()
-    diff_high = preds[(preds['question_type'] == 'different_domain') & (preds['match_type'] == 'high')]['pred_prob'].mean()
-    diff_low = preds[(preds['question_type'] == 'different_domain') & (preds['match_type'] == 'low')]['pred_prob'].mean()
+    same_shared = preds[(preds['question_type'] == 'same_domain') & (preds['stance'] == 'shared')]['pred_prob'].mean()
+    same_opposing = preds[(preds['question_type'] == 'same_domain') & (preds['stance'] == 'opposing')]['pred_prob'].mean()
+    diff_shared = preds[(preds['question_type'] == 'different_domain') & (preds['stance'] == 'shared')]['pred_prob'].mean()
+    diff_opposing = preds[(preds['question_type'] == 'different_domain') & (preds['stance'] == 'opposing')]['pred_prob'].mean()
 
-    shuffled_grads.append((same_high - same_low) - (diff_high - diff_low))
+    shuffled_grads.append((same_shared - same_opposing) - (diff_shared - diff_opposing))
 
 scrambled_gradient = np.mean(shuffled_grads)
 scrambled_std = np.std(shuffled_grads)
@@ -904,18 +941,18 @@ data_dir = base_dir / 'data'
 
 # Load P(shared) timecourse - use final time bin
 pshared_df = pd.read_csv(llm_dir / 'pshared_timecourse.csv')
-pshared_hl = pshared_df[pshared_df['match_type'].isin(['high', 'low'])]
+pshared_hl = pshared_df[pshared_df['stance'].isin(['shared', 'opposing'])]
 final_bin = pshared_hl['time_bin'].max()
 pshared_final = pshared_hl[pshared_hl['time_bin'] == final_bin]
 
 # Compute LLM P(shared) by stance and question category
 llm_pshared = {}
-for mt in ['high', 'low']:
+for stance in ['shared', 'opposing']:
     for cat in ['matched', 'same_domain', 'different_domain']:
-        subset = pshared_final[(pshared_final['match_type'] == mt) &
+        subset = pshared_final[(pshared_final['stance'] == stance) &
                                (pshared_final['question_category'] == cat)]
         if len(subset) > 0:
-            llm_pshared[(mt, cat)] = subset['predicted_agreement'].mean()
+            llm_pshared[(stance, cat)] = subset['predicted_agreement'].mean()
 
 # Load human behavioral data for comparison
 responses_df = pd.read_csv(data_dir / 'responses.csv', low_memory=False)
@@ -924,18 +961,18 @@ chat_data = responses_df[responses_df['experiment'] == 'chat']
 # Compute human P(shared) by stance and question type
 human_pshared = {}
 cat_to_qt = {'matched': 'observed', 'same_domain': 'same_domain', 'different_domain': 'different_domain'}
-for mt in ['high', 'low']:
+for stance in ['shared', 'opposing']:
     for cat, qt in cat_to_qt.items():
-        subset = chat_data[(chat_data['match_type'] == mt) & (chat_data['question_type'] == qt)]
+        subset = chat_data[(chat_data['stance'] == stance) & (chat_data['question_type'] == qt)]
         if len(subset) > 0:
-            human_pshared[(mt, cat)] = subset['participant_binary_prediction'].mean()
+            human_pshared[(stance, cat)] = subset['participant_binary_prediction'].mean()
 
 # Create table matching LaTeX format
 rows = []
-for mt, stance_label in [('high', 'Shared'), ('low', 'Opposing')]:
+for stance, stance_label in [('shared', 'Shared'), ('opposing', 'Opposing')]:
     for cat, cat_label in [('matched', 'Focal (discussed)'), ('same_domain', 'Same domain'), ('different_domain', 'Different domain')]:
-        llm_val = llm_pshared.get((mt, cat), float('nan'))
-        human_val = human_pshared.get((mt, cat), float('nan'))
+        llm_val = llm_pshared.get((stance, cat), float('nan'))
+        human_val = human_pshared.get((stance, cat), float('nan'))
         rows.append({
             'Stance': stance_label,
             'Question Type': cat_label,

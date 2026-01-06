@@ -138,12 +138,12 @@ qt_labels = ['Observed', 'Same\nDomain', 'Different\nDomain']
 x = np.arange(len(qt_keys))
 width = 0.35
 
-for i, mt in enumerate(['low', 'high']):
-    offset = -width/2 if mt == 'low' else width/2
-    rates = [model_rates[(qt, mt)] for qt in qt_keys]
-    yerr = [[model_rates[(qt, mt)] - rate_cis[(qt, mt)][0] for qt in qt_keys],
-            [rate_cis[(qt, mt)][1] - model_rates[(qt, mt)] for qt in qt_keys]]
-    ax.bar(x + offset, rates, width, color=COLORS[mt], label=f'{mt.capitalize()} match',
+for i, stance in enumerate(['opposing', 'shared']):
+    offset = -width/2 if stance == 'opposing' else width/2
+    rates = [model_rates[(qt, stance)] for qt in qt_keys]
+    yerr = [[model_rates[(qt, stance)] - rate_cis[(qt, stance)][0] for qt in qt_keys],
+            [rate_cis[(qt, stance)][1] - model_rates[(qt, stance)] for qt in qt_keys]]
+    ax.bar(x + offset, rates, width, color=COLORS[stance], label=f'{stance.capitalize()} stance',
            yerr=yerr, capsize=0, error_kw={'linewidth': 1.5})
 
 ax.set_xticks(x)
@@ -174,15 +174,15 @@ for domain in DOMAIN_RANGES.keys():
                               (nochat_preds['question_type'] == qt)]
         if len(subset) == 0:
             continue
-        high = subset[subset['match_type'] == 'high']
-        low = subset[subset['match_type'] == 'low']
-        if len(high) == 0 or len(low) == 0:
+        shared = subset[subset['stance'] == 'shared']
+        opposing = subset[subset['stance'] == 'opposing']
+        if len(shared) == 0 or len(opposing) == 0:
             continue
         domain_data.append({
             'domain': domain,
             'question_type': qt,
-            'model_effect': high['pred_prob'].mean() - low['pred_prob'].mean(),
-            'human_effect': high['actual'].mean() - low['actual'].mean()
+            'model_effect': shared['pred_prob'].mean() - opposing['pred_prob'].mean(),
+            'human_effect': shared['actual'].mean() - opposing['actual'].mean()
         })
 
 domain_df = pd.DataFrame(domain_data)
@@ -298,12 +298,12 @@ fig, axes = plt.subplots(1, 3, figsize=(12, 4))
 
 # Panel A
 ax = axes[0]
-for i, mt in enumerate(['low', 'high']):
-    offset = -width/2 if mt == 'low' else width/2
-    rates = [model_rates[(qt, mt)] for qt in qt_keys]
-    yerr = [[model_rates[(qt, mt)] - rate_cis[(qt, mt)][0] for qt in qt_keys],
-            [rate_cis[(qt, mt)][1] - model_rates[(qt, mt)] for qt in qt_keys]]
-    ax.bar(x + offset, rates, width, color=COLORS[mt], label=f'{mt.capitalize()} match',
+for i, stance in enumerate(['opposing', 'shared']):
+    offset = -width/2 if stance == 'opposing' else width/2
+    rates = [model_rates[(qt, stance)] for qt in qt_keys]
+    yerr = [[model_rates[(qt, stance)] - rate_cis[(qt, stance)][0] for qt in qt_keys],
+            [rate_cis[(qt, stance)][1] - model_rates[(qt, stance)] for qt in qt_keys]]
+    ax.bar(x + offset, rates, width, color=COLORS[stance], label=f'{stance.capitalize()} stance',
            yerr=yerr, capsize=0, error_kw={'linewidth': 1.5})
 ax.set_xticks(x)
 ax.set_xticklabels(qt_labels)
@@ -371,20 +371,20 @@ for cat in ['matched', 'same_domain', 'different_domain']:
 
 # Load timecourse data
 pshared_df = pd.read_csv(base_dir / 'data' / 'llm_results' / 'pshared_timecourse.csv')
-pshared_hl = pshared_df[pshared_df['match_type'].isin(['high', 'low'])].copy()
+pshared_hl = pshared_df[pshared_df['stance'].isin(['shared', 'opposing'])].copy()
 
 # Compute means
 timecourse = pshared_hl.groupby(
-    ['time_bin', 'bin_seconds', 'match_type', 'question_category']
+    ['time_bin', 'bin_seconds', 'stance', 'question_category']
 )['predicted_agreement'].mean().reset_index()
 
 # Human rates for comparison
 chat_data = data[data['experiment'] == 'chat'].copy()
 human_rates = {}
-for mt in ['high', 'low']:
+for stance in ['shared', 'opposing']:
     for qt in ['observed', 'same_domain', 'different_domain']:
-        subset = chat_data[(chat_data['match_type'] == mt) & (chat_data['question_type'] == qt)]
-        human_rates[(mt, qt)] = subset['participant_binary_prediction'].mean()
+        subset = chat_data[(chat_data['stance'] == stance) & (chat_data['question_type'] == qt)]
+        human_rates[(stance, qt)] = subset['participant_binary_prediction'].mean()
 
 # Plot
 fig, axes = plt.subplots(1, 2, figsize=(9, 4), sharey=True)
@@ -396,15 +396,15 @@ cat_styles = {
 }
 cat_to_human = {'matched': 'observed', 'same_domain': 'same_domain', 'different_domain': 'different_domain'}
 
-for ax, (mt, title) in zip(axes, [('high', 'Shared Stance'), ('low', 'Opposing Stance')]):
+for ax, (stance, title) in zip(axes, [('shared', 'Shared Stance'), ('opposing', 'Opposing Stance')]):
     for cat in ['matched', 'same_domain', 'different_domain']:
-        subset = timecourse[(timecourse['match_type'] == mt) & (timecourse['question_category'] == cat)]
+        subset = timecourse[(timecourse['stance'] == stance) & (timecourse['question_category'] == cat)]
         style = cat_styles[cat]
         ax.plot(subset['bin_seconds'], subset['predicted_agreement'],
                 color=style['color'], linewidth=style['lw'],
                 marker=style['marker'], markersize=style['ms'], label=style['label'])
         # Human dashed line
-        ax.axhline(human_rates[(mt, cat_to_human[cat])], color=style['color'],
+        ax.axhline(human_rates[(stance, cat_to_human[cat])], color=style['color'],
                    linestyle='--', linewidth=1.5, alpha=0.7)
 
     ax.set_xlabel('Conversation time (s)')

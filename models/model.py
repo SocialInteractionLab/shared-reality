@@ -435,7 +435,7 @@ def prepare_evaluation_data(data: pd.DataFrame) -> dict:
     listener believes they observed, not ground truth.
     """
     obs_qs, r_partners, r_selves = [], [], []
-    participant_info = []  # (pid, question, domain, match_type, question_type, actual)
+    participant_info = []  # (pid, question, domain, stance, question_type, actual)
 
     for pid in data["pid"].unique():
         subj = data[data["pid"] == pid]
@@ -447,15 +447,20 @@ def prepare_evaluation_data(data: pd.DataFrame) -> dict:
 
         # Use perceived response for chat, ground truth for no-chat
         experiment = subj["experiment"].iloc[0]
+        obs_row = subj[subj["question_type"] == "observed"]
+        if len(obs_row) == 0:
+            continue
+
         if experiment == "chat":
-            # Listener's perception of partner's response (from observed question row)
-            obs_row = subj[subj["question_type"] == "observed"]
-            if len(obs_row) == 0:
-                continue
+            # Chat: listener's perception of partner's response (inferred from conversation)
             r_partner = obs_row["postChatResponse"].iloc[0]
         else:
-            # No-chat: direct observation, so use ground truth
-            r_partner = matched["partner_response"].iloc[0]
+            # No-chat: ground truth shown to participant (explicit observation)
+            r_partner = obs_row["observedResponse"].iloc[0]
+            # Alternative: use participant's reported perception (postChatResponse)
+            # This would be more consistent with chat (both use perception),
+            # but ~10% of no-chat participants report different values than shown.
+            # r_partner = obs_row["postChatResponse"].iloc[0]
 
         if pd.isna(r_partner):
             continue
@@ -474,7 +479,7 @@ def prepare_evaluation_data(data: pd.DataFrame) -> dict:
                 "pid_idx": len(obs_qs) - 1,  # Index into batch arrays
                 "question": int(row["question"]) - 1,
                 "question_domain": row["preChatDomain"],
-                "match_type": matched["match_type"].iloc[0],
+                "stance": matched["stance"].iloc[0],
                 "question_type": row["question_type"],
                 "actual": row["participant_binary_prediction"],
             })
@@ -492,18 +497,19 @@ def compute_gradient_error(pred_df: pd.DataFrame, human_rates: dict) -> float:
     Compute gradient error (deviation from human transfer effects).
 
     This is the metric minimized during parameter fitting.
+    Uses stance (shared/opposing) derived from matchedTolerance.
     """
     model_rates = {}
     for qt in ['same_domain', 'different_domain']:
-        for mt in ['high', 'low']:
-            cell = pred_df[(pred_df["question_type"] == qt) & (pred_df["match_type"] == mt)]
-            model_rates[(qt, mt)] = cell["pred_prob"].mean() if len(cell) else 0.5
+        for stance in ['shared', 'opposing']:
+            cell = pred_df[(pred_df["question_type"] == qt) & (pred_df["stance"] == stance)]
+            model_rates[(qt, stance)] = cell["pred_prob"].mean() if len(cell) else 0.5
 
-    model_gradient = (model_rates[('same_domain', 'high')] - model_rates[('same_domain', 'low')]) - \
-                     (model_rates[('different_domain', 'high')] - model_rates[('different_domain', 'low')])
+    model_gradient = (model_rates[('same_domain', 'shared')] - model_rates[('same_domain', 'opposing')]) - \
+                     (model_rates[('different_domain', 'shared')] - model_rates[('different_domain', 'opposing')])
 
-    human_gradient = (human_rates[('same_domain', 'high')] - human_rates[('same_domain', 'low')]) - \
-                     (human_rates[('different_domain', 'high')] - human_rates[('different_domain', 'low')])
+    human_gradient = (human_rates[('same_domain', 'shared')] - human_rates[('same_domain', 'opposing')]) - \
+                     (human_rates[('different_domain', 'shared')] - human_rates[('different_domain', 'opposing')])
 
     return abs(model_gradient - human_gradient)
 
@@ -524,7 +530,7 @@ def fit_parameters(
     Args:
         k_values: List of k values to optimize over (single k or multiple for unified)
         eval_data: Output of prepare_evaluation_data()
-        human_rates: Dict of human rates {(question_type, match_type): rate}
+        human_rates: Dict of human rates {(question_type, stance): rate}
         lambda_mix: Mixture weight λ ∈ [0,1]
         verbose: Print optimization progress
 
