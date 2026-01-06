@@ -113,7 +113,7 @@ Participants should accurately perceive agreement/disagreement on the focal topi
 # Filter to observed/focal question only
 obs_df = df_pd[df_pd['question'] == df_pd['matchedIdx']]
 
-print('=== Manipulation Check: P(judged shared) on FOCAL question ===\n')
+print('=== Manipulation Check: P(Expect Commonality) on FOCAL question ===\n')
 
 # 2x2 table
 print('                        Actual Stance')
@@ -139,7 +139,7 @@ for exp in ['no-chat', 'chat']:
     exp_data = manip_df[manip_df['experiment'] == exp]
     shared = exp_data[exp_data['stance'] == 'shared'].iloc[0]
     opposing = exp_data[exp_data['stance'] == 'opposing'].iloc[0]
-    label = "No-Chat" if exp == 'no-chat' else "Chat"
+    label = "Imagined" if exp == 'no-chat' else "Real"
     print(f"{label:12}   {shared['p_shared']*100:5.1f}% (n={int(shared['n'])})   {opposing['p_shared']*100:5.1f}% (n={int(opposing['n'])})")
 
 print('-' * 50)
@@ -151,11 +151,11 @@ for exp in ['no-chat', 'chat']:
     p_shared = exp_data[exp_data['stance'] == 'shared']['p_shared'].values[0]
     p_opposing = exp_data[exp_data['stance'] == 'opposing']['p_shared'].values[0]
     discrim = p_shared - p_opposing
-    label = "No-Chat" if exp == 'no-chat' else "Chat"
+    label = "Imagined" if exp == 'no-chat' else "Real"
     print(f"{label:12}: {discrim*100:+.1f} percentage points")
 
 print('\n→ Both conditions show strong discrimination')
-print('→ Chat elevates commonality judgments in BOTH cells')
+print('→ Real interaction elevates commonality judgments in BOTH cells')
 print('  (even when partners disagreed, conversation led to perceiving more common ground)')
 ```
 
@@ -214,7 +214,7 @@ fig, axes = plt.subplots(1, 2, figsize=(10, 4))
 ax = axes[0]
 
 category_order = ['sameQ', 'sameD', 'diffD']
-category_labels = ['Observed', 'Same Domain', 'Different Domain']
+category_labels = ['Focal Topic', 'Same Domain', 'Different Domain']
 stance_order = ['opposing', 'shared']
 colors = [BLUE, PINK]
 
@@ -468,8 +468,8 @@ df_pd = pd.read_csv('/tmp/main_df.csv', low_memory=False)
 
 print('=== Sample Description ===')
 print(f"Total participants: N = {df_pd['pid'].nunique()}")
-print(f"  No-chat: n = {df_pd[df_pd['experiment'] == 'no-chat']['pid'].nunique()}")
-print(f"  Chat: n = {df_pd[df_pd['experiment'] == 'chat']['pid'].nunique()}")
-print(f"  Chat dyads: {df_pd[df_pd['experiment'] == 'chat']['dyadId'].nunique()}")
-print(f'\nPaper reports: N = 1,205 (527 imagined; 678 real, 339 dyads)')
+print(f"  Imagined interaction: n = {df_pd[df_pd['experiment'] == 'no-chat']['pid'].nunique()}")
+print(f"  Real interaction: n = {df_pd[df_pd['experiment'] == 'chat']['pid'].nunique()}")
+print(f"  Real interaction dyads: {df_pd[df_pd['experiment'] == 'chat']['dyadId'].nunique()}")
+print(f'\nPaper reports: N = 1,169 (529 imagined; 640 real, 320 dyads)')
 ```

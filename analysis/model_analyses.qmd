@@ -134,7 +134,7 @@ rate_cis = bootstrap_rates(nochat_preds, 'pred_prob')
 fig, ax = plt.subplots(figsize=(4, 4))
 
 qt_keys = ['observed', 'same_domain', 'different_domain']
-qt_labels = ['Observed', 'Same\nDomain', 'Different\nDomain']
+qt_labels = ['Focal\nTopic', 'Same\nDomain', 'Different\nDomain']
 x = np.arange(len(qt_keys))
 width = 0.35
 
@@ -143,12 +143,12 @@ for i, stance in enumerate(['opposing', 'shared']):
     rates = [model_rates[(qt, stance)] for qt in qt_keys]
     yerr = [[model_rates[(qt, stance)] - rate_cis[(qt, stance)][0] for qt in qt_keys],
             [rate_cis[(qt, stance)][1] - model_rates[(qt, stance)] for qt in qt_keys]]
-    ax.bar(x + offset, rates, width, color=COLORS[stance], label=f'{stance.capitalize()} stance',
+    ax.bar(x + offset, rates, width, color=COLORS[stance], label='Opposing Stance' if stance == 'opposing' else 'Shared Stance',
            yerr=yerr, capsize=0, error_kw={'linewidth': 1.5})
 
 ax.set_xticks(x)
 ax.set_xticklabels(qt_labels)
-ax.set_ylabel('Model P(shared)', fontweight='bold')
+ax.set_ylabel('Model Expected Commonality', fontweight='bold')
 ax.set_ylim(0, 1.0)
 ax.legend(frameon=False, loc='upper right')
 ax.set_title('A', fontweight='bold', loc='left', fontsize=14)
@@ -190,11 +190,12 @@ domain_df = pd.DataFrame(domain_data)
 # Plot scatter
 for qt in ['same_domain', 'different_domain']:
     subset = domain_df[domain_df['question_type'] == qt]
-    color = COLORS['bayesian'] if qt == 'same_domain' else COLORS['scrambled']
-    marker = 'o' if qt == 'same_domain' else 's'
-    label = 'Same domain' if qt == 'same_domain' else 'Different domain'
+    color = COLORS['same'] if qt == 'same_domain' else COLORS['diff']
+    marker = '*' if qt == 'same_domain' else 'o'
+    size = 220 if qt == 'same_domain' else 80
+    label = 'Same Domain' if qt == 'same_domain' else 'Different Domain'
     ax.scatter(subset['model_effect'], subset['human_effect'],
-               c=color, marker=marker, s=80, edgecolors='white', linewidth=0.5, label=label)
+               c=color, marker=marker, s=size, edgecolors='white', linewidth=0.5, label=label)
 
 # Correlation and identity line
 r = np.corrcoef(domain_df['model_effect'], domain_df['human_effect'])[0, 1]
@@ -205,10 +206,10 @@ ax.plot(lims, lims, '--', color='gray', alpha=0.3, linewidth=1, zorder=0)
 ax.set_xlim(lims)
 ax.set_ylim(lims)
 
-ax.set_xlabel('Model effect', fontweight='bold')
-ax.set_ylabel('Human effect', fontweight='bold')
+ax.set_xlabel('Model Transfer Effect', fontweight='bold')
+ax.set_ylabel('Human Transfer Effect', fontweight='bold')
 ax.legend(frameon=False, loc='lower right')
-ax.set_title('B', fontweight='bold', loc='left', fontsize=14)
+ax.set_title('B: Bayesian Model Domain-Level Fit', fontweight='bold', loc='left', fontsize=14)
 
 plt.tight_layout()
 plt.show()
@@ -268,7 +269,7 @@ ax.bar(range(len(gradients)), gradients, color=colors,
        yerr=[yerr_lower, yerr_upper], capsize=0, error_kw={'linewidth': 1.5})
 ax.set_xticks(range(len(labels)))
 ax.set_xticklabels(labels, fontsize=10)
-ax.set_ylabel('Gradient (same − diff)', fontweight='bold')
+ax.set_ylabel('Gradient (Same - Different)', fontweight='bold')
 ax.set_ylim(0, max([g + e for g, e in zip(gradients, yerr_upper)]) * 1.25)
 
 # Significance bracket
@@ -303,11 +304,11 @@ for i, stance in enumerate(['opposing', 'shared']):
     rates = [model_rates[(qt, stance)] for qt in qt_keys]
     yerr = [[model_rates[(qt, stance)] - rate_cis[(qt, stance)][0] for qt in qt_keys],
             [rate_cis[(qt, stance)][1] - model_rates[(qt, stance)] for qt in qt_keys]]
-    ax.bar(x + offset, rates, width, color=COLORS[stance], label=f'{stance.capitalize()} stance',
+    ax.bar(x + offset, rates, width, color=COLORS[stance], label='Opposing Stance' if stance == 'opposing' else 'Shared Stance',
            yerr=yerr, capsize=0, error_kw={'linewidth': 1.5})
 ax.set_xticks(x)
 ax.set_xticklabels(qt_labels)
-ax.set_ylabel('Model P(shared)', fontweight='bold')
+ax.set_ylabel('Model Expected Commonality', fontweight='bold')
 ax.set_ylim(0, 1.0)
 ax.legend(frameon=False, loc='upper right')
 ax.text(-0.15, 1.05, 'A', transform=ax.transAxes, fontsize=16, fontweight='bold')
@@ -316,17 +317,18 @@ ax.text(-0.15, 1.05, 'A', transform=ax.transAxes, fontsize=16, fontweight='bold'
 ax = axes[1]
 for qt in ['same_domain', 'different_domain']:
     subset = domain_df[domain_df['question_type'] == qt]
-    color = COLORS['bayesian'] if qt == 'same_domain' else COLORS['scrambled']
-    marker = 'o' if qt == 'same_domain' else 's'
-    label = 'Same domain' if qt == 'same_domain' else 'Different domain'
+    color = COLORS['same'] if qt == 'same_domain' else COLORS['diff']
+    marker = '*' if qt == 'same_domain' else 'o'
+    size = 220 if qt == 'same_domain' else 80
+    label = 'Same Domain' if qt == 'same_domain' else 'Different Domain'
     ax.scatter(subset['model_effect'], subset['human_effect'],
-               c=color, marker=marker, s=80, edgecolors='white', linewidth=0.5, label=label)
+               c=color, marker=marker, s=size, edgecolors='white', linewidth=0.5, label=label)
 ax.text(0.05, 0.95, f'r = {r:.2f}', transform=ax.transAxes, fontsize=12, fontweight='bold')
 ax.plot(lims, lims, '--', color='gray', alpha=0.3, linewidth=1, zorder=0)
 ax.set_xlim(lims)
 ax.set_ylim(lims)
-ax.set_xlabel('Model effect', fontweight='bold')
-ax.set_ylabel('Human effect', fontweight='bold')
+ax.set_xlabel('Model Transfer Effect', fontweight='bold')
+ax.set_ylabel('Human Transfer Effect', fontweight='bold')
 ax.legend(frameon=False, loc='lower right')
 ax.text(-0.15, 1.05, 'B', transform=ax.transAxes, fontsize=16, fontweight='bold')
 
@@ -336,7 +338,7 @@ ax.bar(range(len(gradients)), gradients, color=colors,
        yerr=[yerr_lower, yerr_upper], capsize=0, error_kw={'linewidth': 1.5})
 ax.set_xticks(range(len(labels)))
 ax.set_xticklabels(labels, fontsize=10)
-ax.set_ylabel('Gradient (same − diff)', fontweight='bold')
+ax.set_ylabel('Gradient (Same - Different)', fontweight='bold')
 ax.set_ylim(0, max([g + e for g, e in zip(gradients, yerr_upper)]) * 1.25)
 add_significance_bracket(ax, 1, 2, bracket_y, text='***')
 ax.text(-0.15, 1.05, 'C', transform=ax.transAxes, fontsize=16, fontweight='bold')
@@ -361,7 +363,7 @@ for cat in ['matched', 'same_domain', 'different_domain']:
         print(f'  {cat}: {acc:.1f}%')
 ```
 
-### P(shared) Timecourse
+### Expected Commonality Timecourse
 
 ```{python}
 #| label: fig5
@@ -390,13 +392,13 @@ for stance in ['shared', 'opposing']:
 fig, axes = plt.subplots(1, 2, figsize=(9, 4), sharey=True)
 
 cat_styles = {
-    'matched': {'color': COLORS['focal'], 'lw': 2.5, 'marker': 'o', 'ms': 5, 'label': 'Focal (discussed)'},
-    'same_domain': {'color': COLORS['same'], 'lw': 2, 'marker': 's', 'ms': 4, 'label': 'Same domain'},
-    'different_domain': {'color': COLORS['diff'], 'lw': 1.5, 'marker': '^', 'ms': 4, 'label': 'Different domain'},
+    'matched': {'color': COLORS['focal'], 'lw': 2.5, 'marker': 'o', 'ms': 5, 'label': 'Focal Topic'},
+    'same_domain': {'color': COLORS['same'], 'lw': 2, 'marker': 's', 'ms': 4, 'label': 'Same Domain'},
+    'different_domain': {'color': COLORS['diff'], 'lw': 1.5, 'marker': '^', 'ms': 4, 'label': 'Different Domain'},
 }
 cat_to_human = {'matched': 'observed', 'same_domain': 'same_domain', 'different_domain': 'different_domain'}
 
-for ax, (stance, title) in zip(axes, [('shared', 'Shared Stance'), ('opposing', 'Opposing Stance')]):
+for ax, (stance, title) in zip(axes, [('opposing', 'Opposing Stance'), ('shared', 'Shared Stance')]):
     for cat in ['matched', 'same_domain', 'different_domain']:
         subset = timecourse[(timecourse['stance'] == stance) & (timecourse['question_category'] == cat)]
         style = cat_styles[cat]
@@ -407,13 +409,13 @@ for ax, (stance, title) in zip(axes, [('shared', 'Shared Stance'), ('opposing', 
         ax.axhline(human_rates[(stance, cat_to_human[cat])], color=style['color'],
                    linestyle='--', linewidth=1.5, alpha=0.7)
 
-    ax.set_xlabel('Conversation time (s)')
-    ax.set_title(title, fontweight='bold')
+    ax.set_xlabel('Conversation Time (s)')
+    ax.set_title(title, fontweight='bold', color=COLORS[stance])
     ax.set_ylim(0.1, 1.0)
     ax.set_xlim(-5, 195)
 
-axes[1].legend(frameon=False, loc='upper right', fontsize=9)
-axes[0].set_ylabel('P(shared)', fontweight='bold')
+axes[0].legend(frameon=False, loc='upper right', fontsize=9)
+axes[0].set_ylabel('Expected Commonality', fontweight='bold')
 axes[0].text(-0.12, 1.05, 'A', transform=axes[0].transAxes, fontsize=16, fontweight='bold')
 axes[1].text(-0.08, 1.05, 'B', transform=axes[1].transAxes, fontsize=16, fontweight='bold')
 
@@ -426,7 +428,7 @@ plt.show()
 
 ```{python}
 #| label: summary
-print('=== Key Results (no-chat condition) ===\n')
+print('=== Key Results (imagined interaction condition) ===\n')
 
 print('Generalization Gradient:')
 print(f'  Human:               {human_gradient:+.3f}')
