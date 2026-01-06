@@ -494,16 +494,16 @@ def compute_gradient_error(pred_df: pd.DataFrame, human_rates: dict) -> float:
     This is the metric minimized during parameter fitting.
     """
     model_rates = {}
-    for qt in ['same_domain', 'different_domain']:
+    for qt in ['same_domain', 'diff_domain']:
         for mt in ['high', 'low']:
             cell = pred_df[(pred_df["question_type"] == qt) & (pred_df["match_type"] == mt)]
             model_rates[(qt, mt)] = cell["pred_prob"].mean() if len(cell) else 0.5
 
     model_gradient = (model_rates[('same_domain', 'high')] - model_rates[('same_domain', 'low')]) - \
-                     (model_rates[('different_domain', 'high')] - model_rates[('different_domain', 'low')])
+                     (model_rates[('diff_domain', 'high')] - model_rates[('diff_domain', 'low')])
 
     human_gradient = (human_rates[('same_domain', 'high')] - human_rates[('same_domain', 'low')]) - \
-                     (human_rates[('different_domain', 'high')] - human_rates[('different_domain', 'low')])
+                     (human_rates[('diff_domain', 'high')] - human_rates[('diff_domain', 'low')])
 
     return abs(model_gradient - human_gradient)
 
