@@ -1,6 +1,6 @@
 ---
 title: "Supplementary Information"
-author: "Reproducibility Code"
+author: "https://github.com/SocialInteractionLab/shared-reality"
 format:
   html:
     code-fold: true
@@ -13,12 +13,10 @@ engine: knitr
 execute:
   warning: false
   message: false
-  cache: true
 knitr:
   opts_chunk:
     message: false
     warning: false
-    cache: true
 ---
 
 ```{r}
@@ -64,22 +62,13 @@ figures_dir.mkdir(parents=True, exist_ok=True)
 
 sys.path.insert(0, str(base_dir))
 
-lowhigh_palette = ['#648FFF', '#DC267F']  # low (blue), high (pink)
+# Stance palette: opposing (blue), shared (pink)
+stance_palette = ['#648FFF', '#DC267F']
 ```
 
 ```{python}
 #| label: load-data
 #| include: false
-
-# Re-import (Python state can be lost between chunks with knitr engine)
-import polars as pl
-from polars import col, lit
-from pathlib import Path
-
-base_dir = Path.cwd().resolve()
-while base_dir.name and not (base_dir / 'data').exists():
-    base_dir = base_dir.parent
-data_dir = base_dir / 'data'
 
 # Load pre-merged behavioral data
 df = pl.read_csv(data_dir / 'responses.csv')
@@ -121,17 +110,6 @@ Interaction type moderated this relationship ($\beta = -0.32$, 95% CI $[-0.36, -
 #| fig-cap: "Commonality expectations as a function of predicted distance between partner and self responses. Participants expected less commonality as the predicted distance increased. Chat participants (right) maintained higher commonality expectations than observation-only participants (left) across all distance levels. Fill color indicates stance condition (pink = shared, blue = opposing). Error bars are 95% bootstrapped confidence intervals."
 #| fig-width: 10
 #| fig-height: 5
-
-# Re-import after R chunks (knitr engine loses Python state)
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
-
-# Load processed data
-inf_df = pd.read_csv('/tmp/df_pd_processed.csv')
-inf_df = inf_df[inf_df['question'] != inf_df['matchedIdx']]
-lowhigh_palette = ['#648FFF', '#DC267F']
 
 # Aggregate by participant first
 inf_grouped = inf_df.groupby(['experiment', 'stance', 'pid', 'distance'])['predictShared'].mean().reset_index()
@@ -367,25 +345,29 @@ import json
 import numpy as np
 import pandas as pd
 from pathlib import Path
+import sys
+import matplotlib.pyplot as plt
 
 # Re-establish base_dir after R chunks
 base_dir = Path.cwd().resolve()
 while base_dir.name and not (base_dir / 'data').exists():
     base_dir = base_dir.parent
+data_dir = base_dir / 'data'
+figures_dir = base_dir / 'outputs' / 'figures'
+figures_dir.mkdir(parents=True, exist_ok=True)
 
-import sys
 sys.path.insert(0, str(base_dir))
-from models.model import CommonalityModel, load_evaluation_data
+from models.model import CommonalityModel
 
-# Load evaluation data
-data = load_evaluation_data()
-nochat_data = data[data['experiment'] == 'no-chat']
+# Load evaluation data fresh
+ksweep_data = pd.read_csv(str(data_dir / 'responses.csv'), low_memory=False)
+ksweep_nochat = ksweep_data[ksweep_data['experiment'] == 'no-chat'].copy()
 
 # Compute human rates for no-chat condition (using stance)
 NOCHAT_HUMAN = {}
 for qt in ['same_domain', 'different_domain']:
     for stance in ['shared', 'opposing']:
-        cell = nochat_data[(nochat_data['question_type'] == qt) & (nochat_data['stance'] == stance)]
+        cell = ksweep_nochat[(ksweep_nochat['question_type'] == qt) & (ksweep_nochat['stance'] == stance)]
         NOCHAT_HUMAN[(qt, stance)] = cell['participant_binary_prediction'].mean()
 
 # Load fitted parameters (same as model_analyses.qmd)
@@ -394,9 +376,9 @@ with open(params_path) as f:
     fitted_cache = json.load(f)
 UNIFIED_PARAMS = {**fitted_cache['unified_params'], 'lambda_mix': 0.0}
 
-# Prepare evaluation data
-nochat_eval = nochat_data[['pid', 'question', 'question_type', 'stance',
-                            'preChatResponse', 'partner_response', 'matchedIdx',
+# Prepare evaluation data (use observedResponse for no-chat condition)
+nochat_eval = ksweep_nochat[['pid', 'question', 'question_type', 'stance',
+                            'preChatResponse', 'observedResponse', 'matchedIdx',
                             'participant_binary_prediction', 'is_matched', 'experiment']].copy()
 
 def fast_evaluate(model, eval_data):
@@ -408,7 +390,7 @@ def fast_evaluate(model, eval_data):
         if len(matched) == 0:
             continue
         obs_q = int(matched['matchedIdx'].iloc[0]) - 1
-        r_partner = matched['partner_response'].iloc[0]
+        r_partner = matched['observedResponse'].iloc[0]  # Use observedResponse for no-chat
         if pd.isna(r_partner):
             continue
         r_self = np.zeros(35)

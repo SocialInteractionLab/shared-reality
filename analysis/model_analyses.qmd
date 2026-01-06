@@ -1,6 +1,6 @@
 ---
 title: "Computational Model Analyses"
-author: "Reproducibility Code"
+author: "https://github.com/SocialInteractionLab/shared-reality"
 format:
   html:
     code-fold: true
