@@ -845,6 +845,26 @@ model_preds_perceived = evaluate_model(nochat, use_perceived=True)
 model_gradient_groundtruth = compute_gradient_for_data(model_preds_groundtruth, 'stance', 'pred_prob')
 model_gradient_perceived = compute_gradient_for_data(model_preds_perceived, 'stance', 'pred_prob')
 
+# Bootstrap CIs for model gradients (resample participants, re-evaluate model)
+def bootstrap_model_gradient(data, use_perceived, n_boot=200):
+    """Bootstrap model gradient by resampling participants."""
+    pids = data['pid'].unique()
+    boot_grads = []
+    for i in range(n_boot):
+        # Sample participants with replacement
+        sample_pids = np.random.choice(pids, size=len(pids), replace=True)
+        sample_data = data[data['pid'].isin(sample_pids)].copy()
+        # Re-evaluate model on this sample
+        model_preds = evaluate_model(sample_data, use_perceived=use_perceived)
+        if len(model_preds) > 0:
+            grad = compute_gradient_for_data(model_preds, 'stance', 'pred_prob')
+            boot_grads.append(grad)
+    return boot_grads
+
+print("Bootstrapping model CIs (this may take a minute)...")
+model_boots_gt = bootstrap_model_gradient(nochat, use_perceived=False, n_boot=200)
+model_boots_perc = bootstrap_model_gradient(nochat, use_perceived=True, n_boot=200)
+
 # Create figure
 fig, ax = plt.subplots(figsize=(8, 5))
 
@@ -857,11 +877,17 @@ human_ci = [human_gradient - np.percentile(human_boots, 2.5),
 ax.bar(x[0], human_gradient, width, label='Human', color='#2c3e50',
        yerr=[[human_ci[0]], [human_ci[1]]], capsize=4)
 
-# Model with ground-truth input
-ax.bar(x[1], model_gradient_groundtruth, width, label='Model (ground truth)', color='#648FFF')
+# Model with ground-truth input (with bootstrap CI)
+model_gt_ci = [model_gradient_groundtruth - np.percentile(model_boots_gt, 2.5),
+               np.percentile(model_boots_gt, 97.5) - model_gradient_groundtruth]
+ax.bar(x[1], model_gradient_groundtruth, width, label='Model (ground truth)', color='#648FFF',
+       yerr=[[model_gt_ci[0]], [model_gt_ci[1]]], capsize=4)
 
-# Model with perceived input
-ax.bar(x[2], model_gradient_perceived, width, label='Model (perceived)', color='#7BC9FF')
+# Model with perceived input (with bootstrap CI)
+model_perc_ci = [model_gradient_perceived - np.percentile(model_boots_perc, 2.5),
+                 np.percentile(model_boots_perc, 97.5) - model_gradient_perceived]
+ax.bar(x[2], model_gradient_perceived, width, label='Model (perceived)', color='#7BC9FF',
+       yerr=[[model_perc_ci[0]], [model_perc_ci[1]]], capsize=4)
 
 # Reference line
 ax.axhline(human_gradient, color='#2c3e50', linestyle='--', linewidth=1.5, alpha=0.4)
@@ -891,8 +917,8 @@ print(f"\n=== Human Gradient (Fixed) ===")
 print(f"Human gradient: {human_gradient:+.4f} (95% CI [{np.percentile(human_boots, 2.5):+.4f}, {np.percentile(human_boots, 97.5):+.4f}])")
 
 print(f"\n=== Model Gradients (varying input only) ===")
-print(f"Model (ground truth input): {model_gradient_groundtruth:+.4f} ({100*model_gradient_groundtruth/human_gradient:.0f}% of human)")
-print(f"Model (perceived input):    {model_gradient_perceived:+.4f} ({100*model_gradient_perceived/human_gradient:.0f}% of human)")
+print(f"Model (ground truth input): {model_gradient_groundtruth:+.4f} (95% CI [{np.percentile(model_boots_gt, 2.5):+.4f}, {np.percentile(model_boots_gt, 97.5):+.4f}]) ({100*model_gradient_groundtruth/human_gradient:.0f}% of human)")
+print(f"Model (perceived input):    {model_gradient_perceived:+.4f} (95% CI [{np.percentile(model_boots_perc, 2.5):+.4f}, {np.percentile(model_boots_perc, 97.5):+.4f}]) ({100*model_gradient_perceived/human_gradient:.0f}% of human)")
 print(f"Difference: {model_gradient_perceived - model_gradient_groundtruth:+.4f}")
 
 print(f"\n=== Interpretation ===")
@@ -932,7 +958,10 @@ human_grads = []
 human_boots_list = []
 model_grads_gt = []  # Model using ground truth input
 model_grads_perc = []  # Model using perceived input
+model_boots_perc_list = []  # Bootstrap CIs for model (perceived)
 ns = []
+
+print("Computing gradients by memory error level (with bootstrap CIs)...")
 
 for i, err in enumerate(error_levels):
     if err == 2:
@@ -949,6 +978,7 @@ for i, err in enumerate(error_levels):
         human_boots_list.append([np.nan])
         model_grads_gt.append(np.nan)
         model_grads_perc.append(np.nan)
+        model_boots_perc_list.append([np.nan])
         continue
 
     # Human gradient (always use experimenter-defined stance)
@@ -962,10 +992,14 @@ for i, err in enumerate(error_levels):
     m_grad_gt = compute_gradient_for_data(model_preds_gt, 'stance', 'pred_prob')
     model_grads_gt.append(m_grad_gt)
 
-    # Model with perceived input
+    # Model with perceived input (with bootstrap CI)
     model_preds_perc = evaluate_model(subset, use_perceived=True)
     m_grad_perc = compute_gradient_for_data(model_preds_perc, 'stance', 'pred_prob')
     model_grads_perc.append(m_grad_perc)
+
+    # Bootstrap for model (perceived) - use fewer iterations for speed
+    m_boots_perc = bootstrap_model_gradient(subset, use_perceived=True, n_boot=100)
+    model_boots_perc_list.append(m_boots_perc)
 
 # Create figure
 fig, axes = plt.subplots(1, 2, figsize=(11, 4))
@@ -997,18 +1031,25 @@ ax.set_ylim(-0.05, 0.25)
 ax = axes[1]
 bar_width = 0.35
 
-for i, (h_grad, m_grad, color, n) in enumerate(zip(human_grads, model_grads_perc, error_colors, ns)):
+for i, (h_grad, h_boots, m_grad, m_boots, color, n) in enumerate(zip(
+        human_grads, human_boots_list, model_grads_perc, model_boots_perc_list, error_colors, ns)):
     if np.isnan(h_grad):
         continue
-    # Human bar
+    # Human bar with CI
+    h_ci_low = h_grad - np.percentile(h_boots, 2.5)
+    h_ci_high = np.percentile(h_boots, 97.5) - h_grad
     ax.bar(i - bar_width/2, h_grad, bar_width, color='#2c3e50', alpha=0.8,
+           yerr=[[h_ci_low], [h_ci_high]], capsize=3,
            label='Human' if i == 0 else '')
-    # Model bar (using perceived input)
+    # Model bar with CI (using perceived input)
+    m_ci_low = m_grad - np.percentile(m_boots, 2.5)
+    m_ci_high = np.percentile(m_boots, 97.5) - m_grad
     ax.bar(i + bar_width/2, m_grad, bar_width, color=color, alpha=0.8,
+           yerr=[[m_ci_low], [m_ci_high]], capsize=3,
            label='Model (perceived input)' if i == 0 else '')
     # Percentage label
     pct = 100 * m_grad / h_grad if h_grad > 0 else 0
-    ax.text(i + bar_width/2, m_grad + 0.01, f'{pct:.0f}%', ha='center', fontsize=10, fontweight='bold')
+    ax.text(i + bar_width/2, m_grad + max(m_ci_high, 0.01) + 0.01, f'{pct:.0f}%', ha='center', fontsize=10, fontweight='bold')
 
 ax.axhline(0, color='gray', linestyle='-', linewidth=0.5, alpha=0.5)
 ax.set_xticks(x)
