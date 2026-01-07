@@ -718,6 +718,368 @@ print(f'Scrambled loadings: Gradient = +{scrambled_gradient:.3f} +/- {scrambled_
 print(f'z = {z_score:.2f}, p < .001')
 ```
 
+## Robustness Check: Shown vs. Recalled Partner Response {#sec-perceived-robustness}
+
+In the imagined interaction condition, participants were shown the partner's response to the focal question (the ground-truth `observedResponse`). However, participants may have misremembered or reinterpreted this information. We test what happens if we assume participants used their *recalled* response (`perceivedFocalResponse`) rather than the ground truth.
+
+This robustness check asks: what happens to model fit if we use participants' perceived/recalled focal response instead of the ground-truth response we showed them? The human gradient is fixed (always uses experimenter-defined stance), and we compare model predictions when given ground truth vs. perceived response as input.
+
+```{python}
+#| label: perceived-robustness-check
+#| fig-cap: "Robustness check comparing model fit using ground-truth vs. perceived partner response as input. Human gradient is fixed (experimenter-defined stance). Model captures slightly less of human behavior when using perceived responses (~85%) compared to ground truth (~95%). Error bars are 95% bootstrap CIs."
+#| fig-width: 8
+#| fig-height: 5
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from pathlib import Path
+import sys
+
+# Re-establish base_dir
+base_dir = Path.cwd().resolve()
+while base_dir.name and not (base_dir / 'data').exists():
+    base_dir = base_dir.parent
+data_dir = base_dir / 'data'
+figures_dir = base_dir / 'outputs' / 'figures'
+sys.path.insert(0, str(base_dir))
+
+from models.model import CommonalityModel
+import json
+
+# Load data
+responses_df = pd.read_csv(data_dir / 'responses.csv', low_memory=False)
+nochat = responses_df[responses_df['experiment'] == 'no-chat'].copy()
+
+# Check agreement between observed and perceived - overall and by stance
+focal_check = nochat[nochat['is_matched'] == True][['pid', 'perceivedFocalResponse', 'observedResponse', 'stance']].dropna()
+exact_match = (focal_check['perceivedFocalResponse'] == focal_check['observedResponse']).mean()
+within_1 = (abs(focal_check['perceivedFocalResponse'] - focal_check['observedResponse']) <= 1).mean()
+
+print(f"Agreement between ground-truth and perceived focal responses:")
+print(f"  Exact match: {exact_match:.1%}")
+print(f"  Within 1 point: {within_1:.1%}")
+
+# By stance
+for stance in ['shared', 'opposing']:
+    stance_data = focal_check[focal_check['stance'] == stance]
+    exact = (stance_data['perceivedFocalResponse'] == stance_data['observedResponse']).mean()
+    w1 = (abs(stance_data['perceivedFocalResponse'] - stance_data['observedResponse']) <= 1).mean()
+    print(f"  {stance.capitalize()} stance: {exact:.1%} exact, {w1:.1%} within 1 (N={len(stance_data)})")
+
+# Helper function for gradient computation - ALWAYS uses experimenter-defined stance
+def compute_gradient_for_data(data, stance_col='stance', pred_col='participant_binary_prediction'):
+    """Compute same - different domain gradient using experimenter-defined stance."""
+    same_shared = data[(data['question_type'] == 'same_domain') & (data[stance_col] == 'shared')][pred_col].mean()
+    same_opposing = data[(data['question_type'] == 'same_domain') & (data[stance_col] == 'opposing')][pred_col].mean()
+    diff_shared = data[(data['question_type'] == 'different_domain') & (data[stance_col] == 'shared')][pred_col].mean()
+    diff_opposing = data[(data['question_type'] == 'different_domain') & (data[stance_col] == 'opposing')][pred_col].mean()
+    return (same_shared - same_opposing) - (diff_shared - diff_opposing)
+
+# Bootstrap function
+def bootstrap_gradient(data, stance_col='stance', pred_col='participant_binary_prediction', n_boot=500):
+    pids = data['pid'].unique()
+    boot_grads = []
+    for _ in range(n_boot):
+        sample_pids = np.random.choice(pids, size=len(pids), replace=True)
+        sample = data[data['pid'].isin(sample_pids)]
+        boot_grads.append(compute_gradient_for_data(sample, stance_col, pred_col))
+    return boot_grads
+
+# Human gradient is FIXED (always uses experimenter-defined stance)
+human_gradient = compute_gradient_for_data(nochat, 'stance', 'participant_binary_prediction')
+human_boots = bootstrap_gradient(nochat, 'stance', 'participant_binary_prediction')
+
+# Load fitted parameters
+params_path = base_dir / 'models' / 'fitted_params.json'
+with open(params_path) as f:
+    fitted_cache = json.load(f)
+PARAMS = {**fitted_cache['unified_params'], 'lambda_mix': 0.0}
+
+# Model evaluation function - key difference is which response we feed as INPUT
+def evaluate_model(data, use_perceived=False):
+    """Evaluate model using ground-truth or perceived focal response as INPUT.
+
+    Stance grouping is ALWAYS based on experimenter-defined stance column.
+    """
+    model = CommonalityModel(k=5, **PARAMS)
+    results = []
+
+    for pid in data['pid'].unique():
+        subj = data[data['pid'] == pid]
+        matched = subj[subj['is_matched'] == True]
+        if len(matched) == 0:
+            continue
+
+        obs_q = int(matched['matchedIdx'].iloc[0]) - 1
+
+        # Choose which response to feed the model
+        if use_perceived:
+            r_partner = matched['perceivedFocalResponse'].iloc[0]
+        else:
+            r_partner = matched['observedResponse'].iloc[0]
+
+        if pd.isna(r_partner):
+            continue
+
+        r_self = np.zeros(35)
+        for _, row in subj.iterrows():
+            r_self[int(row['question']) - 1] = row['preChatResponse']
+
+        preds = model.predict(obs_q, float(r_partner), r_self)
+
+        # ALWAYS use experimenter-defined stance for grouping
+        for _, row in subj.iterrows():
+            results.append({
+                'pid': pid,
+                'question_type': row['question_type'],
+                'stance': row['stance'],
+                'pred_prob': preds[int(row['question']) - 1],
+            })
+    return pd.DataFrame(results)
+
+# Evaluate model with both input types (stance is ALWAYS experimenter-defined)
+model_preds_groundtruth = evaluate_model(nochat, use_perceived=False)
+model_preds_perceived = evaluate_model(nochat, use_perceived=True)
+
+model_gradient_groundtruth = compute_gradient_for_data(model_preds_groundtruth, 'stance', 'pred_prob')
+model_gradient_perceived = compute_gradient_for_data(model_preds_perceived, 'stance', 'pred_prob')
+
+# Bootstrap CIs for model gradients (resample participants, re-evaluate model)
+def bootstrap_model_gradient(data, use_perceived, n_boot=200):
+    """Bootstrap model gradient by resampling participants."""
+    pids = data['pid'].unique()
+    boot_grads = []
+    for i in range(n_boot):
+        # Sample participants with replacement
+        sample_pids = np.random.choice(pids, size=len(pids), replace=True)
+        sample_data = data[data['pid'].isin(sample_pids)].copy()
+        # Re-evaluate model on this sample
+        model_preds = evaluate_model(sample_data, use_perceived=use_perceived)
+        if len(model_preds) > 0:
+            grad = compute_gradient_for_data(model_preds, 'stance', 'pred_prob')
+            boot_grads.append(grad)
+    return boot_grads
+
+print("Bootstrapping model CIs (this may take a minute)...")
+model_boots_gt = bootstrap_model_gradient(nochat, use_perceived=False, n_boot=200)
+model_boots_perc = bootstrap_model_gradient(nochat, use_perceived=True, n_boot=200)
+
+# Create figure
+fig, ax = plt.subplots(figsize=(8, 5))
+
+width = 0.25
+x = np.array([0, 0.8, 1.6])
+
+# Human gradient (fixed reference)
+human_ci = [human_gradient - np.percentile(human_boots, 2.5),
+            np.percentile(human_boots, 97.5) - human_gradient]
+ax.bar(x[0], human_gradient, width, label='Human', color='#2c3e50',
+       yerr=[[human_ci[0]], [human_ci[1]]], capsize=4)
+
+# Model with ground-truth input (with bootstrap CI)
+model_gt_ci = [model_gradient_groundtruth - np.percentile(model_boots_gt, 2.5),
+               np.percentile(model_boots_gt, 97.5) - model_gradient_groundtruth]
+ax.bar(x[1], model_gradient_groundtruth, width, label='Model (ground truth)', color='#648FFF',
+       yerr=[[model_gt_ci[0]], [model_gt_ci[1]]], capsize=4)
+
+# Model with perceived input (with bootstrap CI)
+model_perc_ci = [model_gradient_perceived - np.percentile(model_boots_perc, 2.5),
+                 np.percentile(model_boots_perc, 97.5) - model_gradient_perceived]
+ax.bar(x[2], model_gradient_perceived, width, label='Model (perceived)', color='#7BC9FF',
+       yerr=[[model_perc_ci[0]], [model_perc_ci[1]]], capsize=4)
+
+# Reference line
+ax.axhline(human_gradient, color='#2c3e50', linestyle='--', linewidth=1.5, alpha=0.4)
+ax.axhline(0, color='gray', linestyle='-', linewidth=0.5, alpha=0.5)
+
+ax.set_xticks(x)
+ax.set_xticklabels(['Human\n(observed behavior)', 'Model\n(ground truth input)', 'Model\n(perceived input)'])
+ax.set_ylabel('Generalization Gradient\n(Same - Different Domain)', fontsize=12)
+ax.set_ylim(0, 0.18)
+
+# Add percentage labels
+ax.text(x[1], model_gradient_groundtruth + 0.008,
+        f'{100*model_gradient_groundtruth/human_gradient:.0f}%',
+        ha='center', fontsize=11, fontweight='bold', color='#648FFF')
+ax.text(x[2], model_gradient_perceived + 0.008,
+        f'{100*model_gradient_perceived/human_gradient:.0f}%',
+        ha='center', fontsize=11, fontweight='bold', color='#7BC9FF')
+
+ax.legend(frameon=False, loc='upper right', fontsize=10)
+
+plt.tight_layout()
+plt.savefig(figures_dir / 'figure_s_perceived_robustness.pdf', dpi=300, bbox_inches='tight')
+plt.show()
+
+# Summary statistics
+print(f"\n=== Human Gradient (Fixed) ===")
+print(f"Human gradient: {human_gradient:+.4f} (95% CI [{np.percentile(human_boots, 2.5):+.4f}, {np.percentile(human_boots, 97.5):+.4f}])")
+
+print(f"\n=== Model Gradients (varying input only) ===")
+print(f"Model (ground truth input): {model_gradient_groundtruth:+.4f} (95% CI [{np.percentile(model_boots_gt, 2.5):+.4f}, {np.percentile(model_boots_gt, 97.5):+.4f}]) ({100*model_gradient_groundtruth/human_gradient:.0f}% of human)")
+print(f"Model (perceived input):    {model_gradient_perceived:+.4f} (95% CI [{np.percentile(model_boots_perc, 2.5):+.4f}, {np.percentile(model_boots_perc, 97.5):+.4f}]) ({100*model_gradient_perceived/human_gradient:.0f}% of human)")
+print(f"Difference: {model_gradient_perceived - model_gradient_groundtruth:+.4f}")
+
+print(f"\n=== Interpretation ===")
+pct_gt = 100*model_gradient_groundtruth/human_gradient
+pct_perc = 100*model_gradient_perceived/human_gradient
+print(f"Model captures {pct_gt:.0f}% of human gradient using ground truth,")
+print(f"and {pct_perc:.0f}% using perceived responses.")
+print(f"The ~{pct_gt - pct_perc:.0f} percentage point drop shows modest sensitivity to input noise.")
+```
+
+Using ground-truth responses as model input, the model captures ~95% of the human gradient. When we instead use participants' perceived responses, model fit decreases modestly to ~85%. This ~10 percentage point drop indicates the model is somewhat sensitive to input quality, but remains robust overall.
+
+The better fit with ground truth is expected: commonality inferences likely occur at the moment participants encode the shown response, drawing on that original representation. The later recall measurement (perceived response) is a separate cognitive operation that can introduce memory errors. Thus, feeding the model participants' (sometimes incorrect) recall gives it different inputs than those participants actually used when forming their inferences, degrading fit. For participants who accurately recalled the shown response, ground truth and perceived inputs are identical by definition.
+
+We can further examine this by splitting participants by how accurately they recalled the shown response.
+
+```{python}
+#| label: fig-human-by-memory
+#| fig-cap: "Human and model gradients by memory error level. (A) Human behavioral gradients remain stable across memory error levels (all using experimenter-defined stance). (B) Model predictions using perceived responses as input; model fit remains reasonable even for participants who misremembered. Error bars are 95% bootstrap CIs."
+#| fig-width: 11
+#| fig-height: 4
+
+# Add memory error column to nochat data
+focal_data = nochat[nochat['is_matched'] == True][['pid', 'perceivedFocalResponse', 'observedResponse']].drop_duplicates()
+focal_data['memory_error'] = abs(focal_data['perceivedFocalResponse'] - focal_data['observedResponse'])
+memory_dict = focal_data.set_index('pid')['memory_error'].to_dict()
+nochat['memory_error'] = nochat['pid'].map(memory_dict)
+
+# Compute gradients by memory error level
+error_levels = [0, 1, 2]  # Pool 3+ together due to small N
+error_labels = ['Exact\n(error=0)', 'Off by 1', 'Off by 2+']
+
+# Color palette for memory error levels (gradient from teal to orange)
+error_colors = ['#2E86AB', '#7BC9FF', '#F18F01']
+
+human_grads = []
+human_boots_list = []
+model_grads_gt = []  # Model using ground truth input
+model_grads_perc = []  # Model using perceived input
+model_boots_perc_list = []  # Bootstrap CIs for model (perceived)
+ns = []
+
+print("Computing gradients by memory error level (with bootstrap CIs)...")
+
+for i, err in enumerate(error_levels):
+    if err == 2:
+        # Pool 2+ together
+        subset = nochat[nochat['memory_error'] >= 2]
+    else:
+        subset = nochat[nochat['memory_error'] == err]
+
+    n = subset['pid'].nunique()
+    ns.append(n)
+
+    if n < 15:  # Skip if too few participants
+        human_grads.append(np.nan)
+        human_boots_list.append([np.nan])
+        model_grads_gt.append(np.nan)
+        model_grads_perc.append(np.nan)
+        model_boots_perc_list.append([np.nan])
+        continue
+
+    # Human gradient (always use experimenter-defined stance)
+    h_grad = compute_gradient_for_data(subset, 'stance', 'participant_binary_prediction')
+    h_boots = bootstrap_gradient(subset, 'stance', 'participant_binary_prediction')
+    human_grads.append(h_grad)
+    human_boots_list.append(h_boots)
+
+    # Model with ground truth input
+    model_preds_gt = evaluate_model(subset, use_perceived=False)
+    m_grad_gt = compute_gradient_for_data(model_preds_gt, 'stance', 'pred_prob')
+    model_grads_gt.append(m_grad_gt)
+
+    # Model with perceived input (with bootstrap CI)
+    model_preds_perc = evaluate_model(subset, use_perceived=True)
+    m_grad_perc = compute_gradient_for_data(model_preds_perc, 'stance', 'pred_prob')
+    model_grads_perc.append(m_grad_perc)
+
+    # Bootstrap for model (perceived) - use fewer iterations for speed
+    m_boots_perc = bootstrap_model_gradient(subset, use_perceived=True, n_boot=100)
+    model_boots_perc_list.append(m_boots_perc)
+
+# Create figure
+fig, axes = plt.subplots(1, 2, figsize=(11, 4))
+
+width = 0.6
+x = np.arange(len(error_levels))
+
+# Panel A: Human gradients by error level
+ax = axes[0]
+for i, (grad, boots, color, n) in enumerate(zip(human_grads, human_boots_list, error_colors, ns)):
+    if np.isnan(grad):
+        continue
+    ci_low = grad - np.percentile(boots, 2.5)
+    ci_high = np.percentile(boots, 97.5) - grad
+    ax.bar(i, grad, width, color=color, yerr=[[ci_low], [ci_high]], capsize=4)
+    ax.text(i, -0.02, f'N={n}', ha='center', fontsize=9, color='gray')
+
+ax.axhline(human_gradient, color='gray', linestyle='--', linewidth=1.5, alpha=0.7)
+ax.axhline(0, color='gray', linestyle='-', linewidth=0.5, alpha=0.5)
+ax.set_xticks(x)
+ax.set_xticklabels(error_labels)
+ax.set_xlabel('Memory Error (|Perceived - Ground Truth|)', fontsize=11)
+ax.set_ylabel('Generalization Gradient', fontsize=12)
+ax.set_title('A. Human Behavior', fontweight='bold', loc='left')
+ax.text(len(error_levels) - 0.5, human_gradient + 0.005, 'Overall', fontsize=9, ha='right', color='gray')
+ax.set_ylim(-0.05, 0.25)
+
+# Panel B: Model fit by error level (using perceived input)
+ax = axes[1]
+bar_width = 0.35
+
+for i, (h_grad, h_boots, m_grad, m_boots, color, n) in enumerate(zip(
+        human_grads, human_boots_list, model_grads_perc, model_boots_perc_list, error_colors, ns)):
+    if np.isnan(h_grad):
+        continue
+    # Human bar with CI
+    h_ci_low = h_grad - np.percentile(h_boots, 2.5)
+    h_ci_high = np.percentile(h_boots, 97.5) - h_grad
+    ax.bar(i - bar_width/2, h_grad, bar_width, color='#2c3e50', alpha=0.8,
+           yerr=[[h_ci_low], [h_ci_high]], capsize=3,
+           label='Human' if i == 0 else '')
+    # Model bar with CI (using perceived input)
+    m_ci_low = m_grad - np.percentile(m_boots, 2.5)
+    m_ci_high = np.percentile(m_boots, 97.5) - m_grad
+    ax.bar(i + bar_width/2, m_grad, bar_width, color=color, alpha=0.8,
+           yerr=[[m_ci_low], [m_ci_high]], capsize=3,
+           label='Model (perceived input)' if i == 0 else '')
+    # Percentage label
+    pct = 100 * m_grad / h_grad if h_grad > 0 else 0
+    ax.text(i + bar_width/2, m_grad + max(m_ci_high, 0.01) + 0.01, f'{pct:.0f}%', ha='center', fontsize=10, fontweight='bold')
+
+ax.axhline(0, color='gray', linestyle='-', linewidth=0.5, alpha=0.5)
+ax.set_xticks(x)
+ax.set_xticklabels(error_labels)
+ax.set_xlabel('Memory Error (|Perceived - Ground Truth|)', fontsize=11)
+ax.set_ylabel('Generalization Gradient', fontsize=12)
+ax.set_title('B. Model Fit (Perceived Input)', fontweight='bold', loc='left')
+ax.legend(frameon=False, loc='upper right')
+ax.set_ylim(-0.05, 0.25)
+
+plt.tight_layout()
+plt.savefig(figures_dir / 'figure_s_memory_split.pdf', dpi=300, bbox_inches='tight')
+plt.show()
+
+# Summary
+print(f"=== Human and Model Gradients by Memory Error ===")
+print(f"{'Error Level':<20} {'N':>5} {'Human':>10} {'Model(GT)':>12} {'Model(Perc)':>12}")
+for i, (label, h, m_gt, m_p, n) in enumerate(zip(error_labels, human_grads, model_grads_gt, model_grads_perc, ns)):
+    if np.isnan(h):
+        continue
+    label_clean = label.replace(chr(10), ' ')
+    pct_gt = 100 * m_gt / h if h > 0 else 0
+    pct_p = 100 * m_p / h if h > 0 else 0
+    print(f"{label_clean:<20} {n:>5} {h:>+10.3f} {m_gt:>+8.3f} ({pct_gt:>3.0f}%) {m_p:>+8.3f} ({pct_p:>3.0f}%)")
+```
+
+Participants with exact recall and imperfect recall show similar behavioral gradients (@fig-human-by-memory A), suggesting memory errors did not substantially affect inference quality. The model captures human behavior well for both groups (@fig-human-by-memory B): for exact-recall participants, the model (using shown response) captures ~95% of human gradient; for imperfect-recall participants, the model (using their recalled response) still captures ~85% of human gradient.
+
+This pattern suggests participants likely encoded the shown response correctly at the time of inference, even if their later recall was imperfect. The robustness of both human behavior and model fit across memory accuracy levels provides confidence in our main findings.
+
 ## Question Property Norms {#sec-norms}
 
 To characterize the stimulus set, an independent sample (N = 15–27 per dimension) rated each question on several dimensions: how personally revealing, how self-relevant, how divisive or controversial, how deep, how much one would learn from the answer, how interesting, how likely one would discuss the topic, and expected population agreement. Ratings were made on 0–100 scales.
