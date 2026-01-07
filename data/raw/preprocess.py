@@ -100,6 +100,13 @@ def load_chat_data():
 
     chat_df = pd.concat(dfs, ignore_index=True)
     chat_df['experiment'] = 'chat'
+
+    # Extract participant's perceived focal response (their postChatResponse on the focal question)
+    # This is what the participant believed their partner's response was after the conversation
+    focal_rows = chat_df[chat_df['question'] == chat_df['matchedIdx']][['pid', 'postChatResponse']].copy()
+    focal_rows.columns = ['pid', 'perceivedFocalResponse']
+    chat_df = chat_df.merge(focal_rows, on='pid', how='left')
+
     return chat_df
 
 
@@ -110,6 +117,12 @@ def load_nochat_data():
 
     # Compute tolerance from ownResponse and observedResponse
     nochat_df['matchedTolerance'] = (nochat_df['ownResponse'] - nochat_df['observedResponse']).abs()
+
+    # Extract participant's perceived focal response (their postChatResponse on the focal question)
+    # This is what the participant recalled/perceived about their partner's response
+    focal_rows = nochat_df[nochat_df['question'] == nochat_df['matchedIdx']][['pid', 'postChatResponse']].copy()
+    focal_rows.columns = ['pid', 'perceivedFocalResponse']
+    nochat_df = nochat_df.merge(focal_rows, on='pid', how='left')
 
     return nochat_df
 
@@ -214,12 +227,13 @@ def create_responses_csv(chat_df, nochat_df):
         'matchedTolerance', 'experiment'
     ]
 
-    # Chat has groupId and partner_response, but no observedResponse
-    chat_subset = chat_df[cols + ['groupId', 'partner_response']].copy()
+    # Chat has groupId, partner_response, and perceivedFocalResponse, but no observedResponse
+    chat_subset = chat_df[cols + ['groupId', 'partner_response', 'perceivedFocalResponse']].copy()
     chat_subset['observedResponse'] = np.nan  # Chat infers from conversation, no explicit observation
 
     # No-chat has observedResponse (ground truth shown to participant), but no partner_response
-    nochat_subset = nochat_df[cols + ['observedResponse']].copy()
+    # Also has perceivedFocalResponse (participant's recalled response on focal question)
+    nochat_subset = nochat_df[cols + ['observedResponse', 'perceivedFocalResponse']].copy()
     nochat_subset['groupId'] = ''
     nochat_subset['partner_response'] = np.nan
 
