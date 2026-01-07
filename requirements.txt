@@ -1,13 +1,17 @@
 # Python dependencies for paper analyses
-pandas>=2.0.0
-numpy>=1.24.0
-jax>=0.4.20
-polars>=0.20.0
-pyarrow>=14.0.0
-seaborn>=0.13.0
-matplotlib>=3.8.0
-scipy>=1.11.0
-statsmodels>=0.14.0
+# This file mirrors pyproject.toml for pip users
 
-# Testing
-pytest>=7.0.0
+numpy>=1.24
+pandas>=2.0
+scipy>=1.10
+matplotlib>=3.7
+seaborn>=0.12
+statsmodels>=0.14
+polars>=0.20
+pyarrow>=14.0
+jax>=0.4
+jaxlib>=0.4
+tabulate>=0.9.0
+
+# Testing (optional)
+pytest>=7.0

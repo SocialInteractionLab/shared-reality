@@ -5,26 +5,24 @@ Code and data for reproducing the analyses in the paper.
 ## Requirements
 
 - **Python** 3.10+ with scientific packages (numpy, pandas, scipy, matplotlib, seaborn, jax)
-- **R** with packages: `lme4`, `lmerTest`, `reticulate`
-- **Quarto**: <https://quarto.org/>
+- **R** 4.0+ with packages: `lme4`, `lmerTest`, `dplyr`, `tidyr`, `reticulate`
+- **Quarto** 1.3+: <https://quarto.org/>
 
 ## Setup
 
 ### Option 1: Using uv (recommended)
 
-[uv](https://docs.astral.sh/uv/) is a fast Python package manager that handles dependencies automatically.
+[uv](https://docs.astral.sh/uv/) is a fast Python package manager that handles virtual environments automatically.
 
 ```bash
-# Install Python dependencies
+# Install Python dependencies (creates .venv automatically)
 uv sync
 
 # Install R packages
-Rscript -e "install.packages(c('lme4', 'lmerTest', 'reticulate'))"
+Rscript -e "install.packages(c('lme4', 'lmerTest', 'dplyr', 'tidyr', 'purrr', 'reticulate'))"
 ```
 
-### Option 2: Using pip (pure Python)
-
-If you prefer not to use uv, you can install dependencies with pip:
+### Option 2: Using pip
 
 ```bash
 # Create and activate a virtual environment
@@ -32,53 +30,63 @@ python -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
 # Install Python dependencies
-pip install numpy pandas scipy matplotlib seaborn statsmodels polars pyarrow jax jaxlib tabulate
+pip install -r requirements.txt
 
 # Install R packages
-Rscript -e "install.packages(c('lme4', 'lmerTest', 'reticulate'))"
+Rscript -e "install.packages(c('lme4', 'lmerTest', 'dplyr', 'tidyr', 'purrr', 'reticulate'))"
 ```
 
 ## Reproducing Analyses
 
-Some notebooks use R's `reticulate` package to run Python code. To ensure R uses the correct Python environment, set the `RETICULATE_PYTHON` environment variable:
+The Quarto notebooks use R's `reticulate` package to run Python code. You must tell R which Python to use by setting the `RETICULATE_PYTHON` environment variable.
+
+### Quick start
 
 ```bash
-# Set Python path for R/reticulate (adjust path if needed)
+# Set Python path and render all notebooks
+RETICULATE_PYTHON=$(pwd)/.venv/bin/python quarto render analysis/model_analyses.qmd
+RETICULATE_PYTHON=$(pwd)/.venv/bin/python quarto render analysis/behavioral_analyses.qmd
+RETICULATE_PYTHON=$(pwd)/.venv/bin/python quarto render analysis/supplement.qmd
+```
+
+### Alternative: Export once per session
+
+```bash
+# Export the variable for your shell session
 export RETICULATE_PYTHON=$(pwd)/.venv/bin/python
-```
 
-### Computational model (Figure 4)
-
-```bash
-quarto render analysis/model_analyses.qmd
-```
-
-### Behavioral analyses (Figures 2, 3)
-
-```bash
-quarto render analysis/behavioral_analyses.qmd
-```
-
-### Supplement
-
-```bash
-quarto render analysis/supplement.qmd
-```
-
-### Run all notebooks
-
-```bash
-export RETICULATE_PYTHON=$(pwd)/.venv/bin/python
+# Then render notebooks without prefix
 quarto render analysis/model_analyses.qmd
 quarto render analysis/behavioral_analyses.qmd
 quarto render analysis/supplement.qmd
 ```
+
+### Individual notebooks
+
+| Notebook | Description | Main outputs |
+|----------|-------------|--------------|
+| `model_analyses.qmd` | Bayesian factor model | Figure 4, Figure 5 |
+| `behavioral_analyses.qmd` | Mixed-effects models | Figure 2, Figure 3 |
+| `supplement.qmd` | Supplementary analyses | SI figures and tables |
+
+## Troubleshooting
+
+**"Python specified in RETICULATE_PYTHON does not exist"**
+- Make sure you ran `uv sync` or `pip install -r requirements.txt` first
+- Check the path: `ls -la .venv/bin/python`
+- Use absolute path: `export RETICULATE_PYTHON=/full/path/to/shared-reality/.venv/bin/python`
+
+**R can't find packages**
+- Install missing R packages: `Rscript -e "install.packages('package_name')"`
+
+**JAX errors on Apple Silicon**
+- JAX should work out of the box on M1/M2 Macs with the dependencies specified
 
 ## Structure
 
-``` text
+```text
 ├── analysis/           # Quarto notebooks
-│   ├── model_analyses.qmd      # Bayesian factor model (Figure 4)
+│   ├── model_analyses.qmd      # Bayesian factor model (Figure 4, 5)
 │   ├── behavioral_analyses.qmd # Mixed-effects models (Figures 2, 3)
 │   └── supplement.qmd          # Supplementary analyses
 ├── data/               # Experimental data
@@ -88,5 +96,7 @@ quarto render analysis/supplement.qmd
 ├── models/             # Computational model code
 │   ├── model.py        # Bayesian factor model
 │   └── llm/            # LLM prediction pipeline
-└── pyproject.toml      # Python dependencies
+├── outputs/figures/    # Generated figures
+├── pyproject.toml      # Python dependencies (for uv)
+└── requirements.txt    # Python dependencies (for pip)
 ```
