@@ -905,6 +905,8 @@ print(f"The ~{pct_gt - pct_perc:.0f} percentage point drop shows modest sensitiv
 
 Using ground-truth responses as model input, the model captures ~95% of the human gradient. When we instead use participants' perceived responses, model fit decreases modestly to ~85%. This ~10 percentage point drop indicates the model is somewhat sensitive to input quality, but remains robust overall.
 
+The better fit with ground truth is expected: commonality inferences likely occur at the moment participants encode the shown response, drawing on that original representation. The later recall measurement (perceived response) is a separate cognitive operation that can introduce memory errors. Thus, feeding the model participants' (sometimes incorrect) recall gives it different inputs than those participants actually used when forming their inferences, degrading fit. For participants who accurately recalled the shown response, ground truth and perceived inputs are identical by definition.
+
 We can further examine this by splitting participants by how accurately they recalled the shown response.
 
 ```{python}
