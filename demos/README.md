@@ -27,9 +27,11 @@ Interactive visualizations for the shared reality computational models.
 
 ### What the demo shows
 
+- **Model equations**: Formal specification of both Bayesian and Egocentric models
 - **Prior, Likelihood, Posterior**: Visualizes Bayesian updating in latent factor space (θ-space)
-- **Pairwise prediction**: Shows P(response=1,2,3,4,5) for any target question given an observation
-- **Parameter exploration**: Adjust k (number of factors), σ_prior, observed question, and response
+- **Side-by-side model comparison**: Compare predictions from Bayesian (population structure) vs Egocentric (self-structure) models
+- **Pairwise prediction**: Shows P(response=1,2,3,4,5) for any target question from both models + mixture
+- **Parameter exploration**: Adjust k, σ_prior, λ (mixture weight), observed question, response, and belief profile
 
 ### Requirements
 
