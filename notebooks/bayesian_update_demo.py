@@ -45,6 +45,7 @@ def __():
         plt,
         Ellipse,
         transforms,
+        Path,
         load_factor_loadings,
         load_question_means,
         load_responses,
@@ -53,14 +54,20 @@ def __():
 
 
 @app.cell
-def __(load_factor_loadings, load_question_means, load_responses, DOMAIN_RANGES):
+def __(load_factor_loadings, load_question_means, DOMAIN_RANGES, Path):
+    import pandas as pd
+
     # Load all factor loadings (up to k=10 for demo)
     all_loadings = load_factor_loadings(k=10)
     means = load_question_means()
-    responses_df = load_responses()
 
-    # Question labels with domains
-    questions = list(responses_df.columns)
+    # Load question text from raw data
+    _data_dir = Path(__file__).parent.parent / "data"
+    _df = pd.read_csv(_data_dir / "responses.csv", low_memory=False)
+
+    # Get unique question text for each question ID (1-35)
+    _q_map = _df.groupby('question')['preChatQuestion'].first().to_dict()
+    questions = [_q_map.get(i+1, f"Question {i+1}") for i in range(35)]
 
     # Create domain labels
     domain_labels = []
