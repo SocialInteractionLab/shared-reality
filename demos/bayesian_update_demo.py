@@ -143,6 +143,14 @@ The Bayesian model represents a partner's beliefs as a latent position $\\theta 
 
 **Number of factors**: Parallel analysis suggests **k=5** factors (explaining 36% of variance). These correspond roughly to political, religious, moral, identity, and preference dimensions.
 
+| Parameter | Symbol | Psychological Meaning |
+|-----------|--------|----------------------|
+| Latent position | $\\theta$ | Partner's position in belief space (unobserved) |
+| Factor loadings | $\\Lambda_q$ | How question $q$ relates to latent factors |
+| Population mean | $\\mu_q$ | Average response to question $q$ |
+| Prior variance | $\\sigma^2_{\\text{prior}}$ | Uncertainty about partner before observing |
+| Observation noise | $\\sigma^2_{\\text{obs}}$ | Uncertainty in the observed response |
+
 **Key insight**: Gradients emerge from *population covariance structure*. Political questions load on the same factors, so observing one updates predictions for others.
     """)
     return
@@ -474,6 +482,16 @@ The egocentric model uses **self as a model for others**. It combines two self-r
 $$P(\\text{commonality}_q) = \\gamma_0 + \\gamma_1 \\cdot \\underbrace{\\exp\\left(-\\frac{|r_{\\text{obs}} - s_{q^*}|}{\\tau}\\right)}_{\\text{perceived similarity}} \\cdot \\underbrace{\\exp\\left(-\\frac{|s_q - s_{q^*}|}{\\tau}\\right)}_{\\text{self-response similarity}}$$
 
 where $s_q$ is YOUR response to question $q$, and $s_{q^*}$ is your response to the observed question.
+
+| Parameter | Symbol | Psychological Meaning |
+|-----------|--------|----------------------|
+| Your response | $s_q$ | Your own answer to question $q$ |
+| Partner's response | $r_{\\text{obs}}$ | Partner's response to focal question |
+| Perceived similarity | $\\exp(-\|r - s\|/\\tau)$ | "They agreed with me" → they're like me |
+| Self-similarity | $\\exp(-\|s_q - s_{q^*}\|/\\tau)$ | How similarly YOU answered $q$ vs observed |
+| Scale parameter | $\\tau$ | Tolerance for disagreement (larger τ = more forgiving) |
+| Base rate | $\\gamma_0$ | Default P(commonality) with no information |
+| Projection weight | $\\gamma_1$ | How much agreement boosts P(commonality) |
 
 **Key insight**: Gradients emerge from *the structure of YOUR beliefs*. If YOUR political responses are correlated, projection transfers within politics. **No population knowledge required.**
     """)
@@ -946,10 +964,11 @@ $$P(\\text{commonality}) = (1 - \\lambda) \\cdot P_{\\text{Bayesian}} + \\lambda
 
 **Key question**: What value of $\\lambda$ best captures human generalization?
 
-The "generalization gradient" measures structured transfer:
-$$\\text{Gradient} = [P(\\text{same domain}) - P(\\text{diff domain})]_{\\text{shared}} - [P(\\text{same domain}) - P(\\text{diff domain})]_{\\text{opposing}}$$
+The **generalization gradient** measures structured transfer—the difference-in-differences:
 
-A positive gradient means same-domain transfer is stronger than different-domain transfer—the signature of structured generalization.
+$$\\text{Gradient} = \\underbrace{(P_{\\text{same}}^{\\text{shared}} - P_{\\text{same}}^{\\text{opposing}})}_{\\text{same-domain effect}} - \\underbrace{(P_{\\text{diff}}^{\\text{shared}} - P_{\\text{diff}}^{\\text{opposing}})}_{\\text{different-domain effect}}$$
+
+A positive gradient means the shared/opposing difference is larger for same-domain questions than different-domain questions—the signature of structured generalization.
     """)
     return
 
