@@ -65,8 +65,8 @@ quarto render analysis/supplement.qmd
 
 | Notebook | Description | Main outputs |
 |----------|-------------|--------------|
-| `model_analyses.qmd` | Bayesian factor model | Figure 4, Figure 5 |
-| `behavioral_analyses.qmd` | Mixed-effects models | Figure 2, Figure 3 |
+| `behavioral_analyses.qmd` | Mixed-effects models | Figure 2, Figure 3, Figure 4 |
+| `model_analyses.qmd` | Bayesian factor model, LLM analysis | Figure 5, Figure 6 |
 | `supplement.qmd` | Supplementary analyses | SI figures and tables |
 
 ## Troubleshooting
@@ -80,18 +80,20 @@ quarto render analysis/supplement.qmd
 - Install missing R packages: `Rscript -e "install.packages('package_name')"`
 
 **JAX errors on Apple Silicon**
+
 - JAX should work out of the box on M1/M2 Macs with the dependencies specified
 
 ## Structure
 
 ```text
 ├── analysis/           # Quarto notebooks
-│   ├── model_analyses.qmd      # Bayesian factor model (Figure 4, 5)
-│   ├── behavioral_analyses.qmd # Mixed-effects models (Figures 2, 3)
-│   └── supplement.qmd          # Supplementary analyses
+│   ├── behavioral_analyses.qmd # Mixed-effects models (Figures 2, 3, 4)
+│   ├── model_analyses.qmd      # Bayesian factor model, LLM (Figures 5, 6)
+│   └── supplement.qmd          # Supplementary analyses (SI figures/tables)
 ├── data/               # Experimental data
 │   ├── responses.csv   # Main behavioral data
-│   ├── questions.csv   # Survey questions
+│   ├── questions.csv   # Survey questions and norms
+│   ├── messages.csv    # Conversation transcripts
 │   └── llm_results/    # LLM prediction outputs
 ├── models/             # Computational model code
 │   ├── model.py        # Bayesian factor model

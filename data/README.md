@@ -34,7 +34,7 @@ Main behavioral data with participant survey responses and predictions.
 | `question` | Question number (1-35) |
 | `preChatDomain` | Domain of question (arbitrary, background, identity, morality, politics, preferences, religion) |
 | `preChatQuestion` | Question text |
-| `preChatResponse` | Participant's own response (1-7 Likert scale) |
+| `preChatResponse` | Participant's own response (1-5 Likert scale) |
 | `postChatResponse` | Participant's response after chat (real interaction condition only) |
 | `predictShared` | Binary prediction: does partner share this attitude? (0=no, 1=yes) |
 | `matchType` | Partner match condition: `high` or `low` (original experiment labels) |
