@@ -47,7 +47,7 @@ import polars as pl
 from polars import col, lit
 
 plt.rcParams['font.family'] = 'Helvetica Neue'
-sns.set_style('whitegrid')
+sns.set_style('white')
 
 # Find project root
 base_dir = Path.cwd().resolve()
@@ -1147,6 +1147,71 @@ plt.show()
 ```
 
 @fig-norms shows domain-level means for key question properties. Religion and identity questions were rated as most personally revealing, while politics and religion were rated as most divisive. Lifestyle and preference questions were rated as least deep and least controversial. This variation in perceived question properties aligns with the differential transfer effects observed across domains and validates that experimenter-assigned domain labels capture meaningful psychological distinctions in how people perceive different types of beliefs.
+
+## Domain-Specific Generalization Gradients {#sec-domain-gradients}
+
+The generalization gradients reported in the main text varied across focal domains. @fig-domain-gradients shows the transfer effect (proportion commonality in the shared stance condition minus the opposing stance condition) separately for same-domain and different-domain questions, for each of the seven focal domains. Domains such as religion and politics show steep gradients (large same-domain transfer effects relative to different-domain), while others such as lifestyle and preferences show flatter profiles.
+
+```{python}
+#| label: fig-domain-gradients
+#| fig-cap: "Generalization gradients by focal domain. Bars show the transfer effect (shared minus opposing stance commonality rate) for same-domain and different-domain questions, separately for each focal domain. Steeper gradients (larger gap between same-domain and different-domain bars) indicate more structured, domain-specific generalization. Data are collapsed across interaction type."
+#| fig-width: 7
+#| fig-height: 4
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+df_pd = pd.read_csv('/tmp/df_pd_processed.csv', low_memory=False)
+
+# Exclude observed question — only generalization items
+gen_df = df_pd[df_pd['category'].isin(['sameD', 'diffD'])].copy()
+gen_df['domain_cap'] = gen_df['matchedDomain'].str.replace('arbitrary', 'Lifestyle').str.capitalize()
+
+# Compute mean commonality rate per domain × category × stance
+rates = (gen_df.groupby(['domain_cap', 'category', 'stance'])['predictShared']
+         .mean().reset_index())
+
+# Pivot to get shared and opposing side by side, then compute transfer effect
+pivot = rates.pivot_table(index=['domain_cap', 'category'], columns='stance',
+                          values='predictShared').reset_index()
+pivot['transfer'] = pivot['shared'] - pivot['opposing']
+
+# Relabel for plotting
+pivot['question_type'] = pivot['category'].map({'sameD': 'Same domain', 'diffD': 'Different domain'})
+
+# Order domains by gradient magnitude (same - diff transfer)
+same = pivot[pivot['category'] == 'sameD'].set_index('domain_cap')['transfer']
+diff = pivot[pivot['category'] == 'diffD'].set_index('domain_cap')['transfer']
+gradient = (same - diff).sort_values(ascending=False)
+domain_order = gradient.index.tolist()
+
+fig, ax = plt.subplots(figsize=(7, 4))
+plt.rcParams.update({'font.size': 11, 'font.family': 'Helvetica Neue'})
+
+bar_width = 0.35
+x = np.arange(len(domain_order))
+
+same_vals = [pivot[(pivot['domain_cap'] == d) & (pivot['category'] == 'sameD')]['transfer'].values[0]
+             for d in domain_order]
+diff_vals = [pivot[(pivot['domain_cap'] == d) & (pivot['category'] == 'diffD')]['transfer'].values[0]
+             for d in domain_order]
+
+ax.bar(x - bar_width/2, same_vals, bar_width, label='Same domain', color='#9F8AC2', alpha=0.8)
+ax.bar(x + bar_width/2, diff_vals, bar_width, label='Different domain', color='#C8C8C8', alpha=0.8)
+
+ax.set_xticks(x)
+ax.set_xticklabels(domain_order, rotation=45, ha='right')
+ax.set_ylabel('Transfer effect\n(shared − opposing)')
+ax.set_xlabel('Focal domain')
+ax.legend(frameon=False)
+ax.axhline(0, color='grey', linewidth=0.5, linestyle='--')
+sns.despine()
+plt.tight_layout()
+plt.savefig(figures_dir / 'figure_s_domain_gradients.pdf', dpi=300, bbox_inches='tight')
+plt.show()
+```
 
 ## Domain-Specific Regression Results {#sec-domain-models}
 
