@@ -1169,23 +1169,45 @@ df_pd = pd.read_csv('/tmp/df_pd_processed.csv', low_memory=False)
 gen_df = df_pd[df_pd['category'].isin(['sameD', 'diffD'])].copy()
 gen_df['domain_cap'] = gen_df['matchedDomain'].str.replace('arbitrary', 'Lifestyle').str.capitalize()
 
-# Compute mean commonality rate per domain × category × stance
+# Bootstrap transfer effect (shared - opposing) per domain × category
+def bootstrap_transfer(data, domain, category, n_boot=1000, seed=42):
+    """Bootstrap the transfer effect (shared - opposing mean) resampling participants."""
+    rng = np.random.default_rng(seed)
+    sub = data[(data['domain_cap'] == domain) & (data['category'] == category)]
+    # Pre-group by stance and pid for efficient resampling
+    shared_sub = sub[sub['stance'] == 'shared']
+    opposing_sub = sub[sub['stance'] == 'opposing']
+    shared_pids = shared_sub['pid'].unique()
+    opposing_pids = opposing_sub['pid'].unique()
+    shared_grouped = {pid: grp['predictShared'].values for pid, grp in shared_sub.groupby('pid')}
+    opposing_grouped = {pid: grp['predictShared'].values for pid, grp in opposing_sub.groupby('pid')}
+    boot_transfers = []
+    for _ in range(n_boot):
+        s_pids = rng.choice(shared_pids, size=len(shared_pids), replace=True)
+        o_pids = rng.choice(opposing_pids, size=len(opposing_pids), replace=True)
+        s_vals = np.concatenate([shared_grouped[p] for p in s_pids])
+        o_vals = np.concatenate([opposing_grouped[p] for p in o_pids])
+        boot_transfers.append(s_vals.mean() - o_vals.mean())
+    return np.percentile(boot_transfers, 2.5), np.percentile(boot_transfers, 97.5)
+
+# Compute mean transfer effects
 rates = (gen_df.groupby(['domain_cap', 'category', 'stance'])['predictShared']
          .mean().reset_index())
-
-# Pivot to get shared and opposing side by side, then compute transfer effect
 pivot = rates.pivot_table(index=['domain_cap', 'category'], columns='stance',
                           values='predictShared').reset_index()
 pivot['transfer'] = pivot['shared'] - pivot['opposing']
-
-# Relabel for plotting
-pivot['question_type'] = pivot['category'].map({'sameD': 'Same domain', 'diffD': 'Different domain'})
 
 # Order domains by gradient magnitude (same - diff transfer)
 same = pivot[pivot['category'] == 'sameD'].set_index('domain_cap')['transfer']
 diff = pivot[pivot['category'] == 'diffD'].set_index('domain_cap')['transfer']
 gradient = (same - diff).sort_values(ascending=False)
 domain_order = gradient.index.tolist()
+
+# Bootstrap CIs for each domain × category
+ci_data = {}
+for domain in domain_order:
+    for cat in ['sameD', 'diffD']:
+        ci_data[(domain, cat)] = bootstrap_transfer(gen_df, domain, cat)
 
 fig, ax = plt.subplots(figsize=(7, 4))
 plt.rcParams.update({'font.size': 11, 'font.family': 'Helvetica Neue'})
@@ -1198,8 +1220,15 @@ same_vals = [pivot[(pivot['domain_cap'] == d) & (pivot['category'] == 'sameD')][
 diff_vals = [pivot[(pivot['domain_cap'] == d) & (pivot['category'] == 'diffD')]['transfer'].values[0]
              for d in domain_order]
 
-ax.bar(x - bar_width/2, same_vals, bar_width, label='Same domain', color='#9F8AC2', alpha=0.8)
-ax.bar(x + bar_width/2, diff_vals, bar_width, label='Different domain', color='#C8C8C8', alpha=0.8)
+same_err = [[v - ci_data[(d, 'sameD')][0] for d, v in zip(domain_order, same_vals)],
+            [ci_data[(d, 'sameD')][1] - v for d, v in zip(domain_order, same_vals)]]
+diff_err = [[v - ci_data[(d, 'diffD')][0] for d, v in zip(domain_order, diff_vals)],
+            [ci_data[(d, 'diffD')][1] - v for d, v in zip(domain_order, diff_vals)]]
+
+ax.bar(x - bar_width/2, same_vals, bar_width, label='Same domain', color='#9F8AC2', alpha=0.8,
+       yerr=same_err, capsize=0, error_kw={'linewidth': 1.5})
+ax.bar(x + bar_width/2, diff_vals, bar_width, label='Different domain', color='#C8C8C8', alpha=0.8,
+       yerr=diff_err, capsize=0, error_kw={'linewidth': 1.5})
 
 ax.set_xticks(x)
 ax.set_xticklabels(domain_order, rotation=45, ha='right')

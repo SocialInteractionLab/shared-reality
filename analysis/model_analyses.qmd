@@ -12,12 +12,12 @@ execute:
   message: false
 ---
 
-This document reproduces the main computational model analyses (Figures 4-5).
+This document reproduces the main computational model analyses (Figures 5-6).
 
 - **Section 1**: Setup and data loading
 - **Section 2**: Parameter fitting (grid search)
-- **Section 3**: Figure 4 (Bayesian model predictions)
-- **Section 4**: Figure 5 (LLM analysis)
+- **Section 3**: Figure 5 (Bayesian model predictions)
+- **Section 4**: Figure 6 (LLM analysis)
 - **Section 5**: Summary statistics
 
 See `supplement.qmd` for additional analyses (k-sweep, factor structure, scrambled control, self-structure diagnostic).
@@ -108,7 +108,7 @@ else:
           f"τ={FITTED_PARAMS['match_threshold']:.3f}, ε={FITTED_PARAMS['epsilon']:.3f}")
 ```
 
-## 3. Figure 4: Bayesian Model Captures Structured Generalization
+## 3. Figure 5: Bayesian Model Captures Structured Generalization
 
 The Bayesian model receives only a single Likert response, so we evaluate on the no-chat condition where human participants also receive only this information.
 
@@ -201,6 +201,12 @@ for qt in ['same_domain', 'different_domain']:
 r = np.corrcoef(domain_df['model_effect'], domain_df['human_effect'])[0, 1]
 ax.text(0.05, 0.95, f'r = {r:.2f}', transform=ax.transAxes, fontsize=12, fontweight='bold')
 
+# Check robustness: correlation excluding religion same_domain outlier
+excl = domain_df[~((domain_df['domain'] == 'religion') & (domain_df['question_type'] == 'same_domain'))]
+r_excl = np.corrcoef(excl['model_effect'], excl['human_effect'])[0, 1]
+print(f"Correlation with all points: r = {r:.3f} (n={len(domain_df)})")
+print(f"Correlation excluding religion same_domain: r = {r_excl:.3f} (n={len(excl)})")
+
 lims = [-0.02, max(ax.get_xlim()[1], ax.get_ylim()[1]) + 0.02]
 ax.plot(lims, lims, '--', color='gray', alpha=0.3, linewidth=1, zorder=0)
 ax.set_xlim(lims)
@@ -290,7 +296,7 @@ print(f'Scrambled:           {scrambled_gradient:+.3f}')
 
 ```{python}
 #| label: fig4-combined
-#| fig-cap: "Figure 4: Factor structure captures systematic generalization"
+#| fig-cap: "Figure 5: Factor structure captures systematic generalization"
 #| fig-width: 12
 #| fig-height: 4
 
@@ -329,7 +335,7 @@ ax.set_xlim(lims)
 ax.set_ylim(lims)
 ax.set_xlabel('Model Transfer Effect', fontweight='bold')
 ax.set_ylabel('Human Transfer Effect', fontweight='bold')
-ax.legend(frameon=False, loc='lower right')
+ax.legend(frameon=True, loc='lower right', edgecolor='black', facecolor='white', framealpha=1)
 ax.text(-0.15, 1.05, 'B', transform=ax.transAxes, fontsize=16, fontweight='bold')
 
 # Panel C
@@ -344,11 +350,11 @@ add_significance_bracket(ax, 1, 2, bracket_y, text='***')
 ax.text(-0.15, 1.05, 'C', transform=ax.transAxes, fontsize=16, fontweight='bold')
 
 plt.tight_layout()
-plt.savefig(base_dir / 'outputs' / 'figures' / 'figure4.pdf', dpi=300, bbox_inches='tight')
+plt.savefig(base_dir / 'outputs' / 'figures' / 'figure5.pdf', dpi=300, bbox_inches='tight')
 plt.show()
 ```
 
-## 4. Figure 5: LLM Analysis
+## 4. Figure 6: LLM Analysis
 
 ```{python}
 #| label: llm-accuracy
@@ -367,7 +373,7 @@ for cat in ['matched', 'same_domain', 'different_domain']:
 
 ```{python}
 #| label: fig5
-#| fig-cap: "Figure 5: LLM recovers structured generalization from conversation transcripts"
+#| fig-cap: "Figure 6: LLM recovers structured generalization from conversation transcripts"
 #| fig-width: 9
 #| fig-height: 4
 
@@ -420,7 +426,7 @@ axes[0].text(-0.12, 1.05, 'A', transform=axes[0].transAxes, fontsize=16, fontwei
 axes[1].text(-0.08, 1.05, 'B', transform=axes[1].transAxes, fontsize=16, fontweight='bold')
 
 plt.tight_layout()
-plt.savefig(base_dir / 'outputs' / 'figures' / 'figure5.pdf', dpi=300, bbox_inches='tight')
+plt.savefig(base_dir / 'outputs' / 'figures' / 'figure6.pdf', dpi=300, bbox_inches='tight')
 plt.show()
 ```
 
