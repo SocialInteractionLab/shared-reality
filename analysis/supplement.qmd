@@ -207,11 +207,11 @@ confint(model, method = "Wald")
 
 We computed factor loadings via eigendecomposition of the 35-question belief correlation matrix. @fig-factor-structure panel A shows the scree plot comparing observed eigenvalues against the 95th percentile from parallel analysis (eigenvalues computed from random data with the same dimensions). The first five components exceeded the parallel analysis threshold, suggesting $k = 5$ factors. These five factors explained 36% of total variance.
 
-@fig-factor-structure panel B displays the absolute loadings for the first five factors, organized by experimenter-assigned domain. Religion and politics questions loaded strongly on single factors (PC1 and PC3, respectively), indicating tight clustering in belief space. Lifestyle and background questions showed more diffuse loadings across multiple factors. This variation in factor structure predicts domain-specific generalization patterns: domains with coherent loadings should support stronger within-domain transfer.
+@fig-factor-structure panel B displays the absolute loadings for the first five factors, organized by experimenter-assigned domain. Religion questions loaded most coherently on a single factor (PC1), while politics questions showed more distributed loadings across multiple factors. Lifestyle and background questions showed the most diffuse loadings. This variation in factor structure predicts domain-specific generalization patterns: domains with more coherent loadings should support stronger within-domain transfer.
 
 ```{python}
 #| label: fig-factor-structure
-#| fig-cap: "Factor structure of belief space. (A) Scree plot comparing observed eigenvalues (solid) against the 95th percentile from parallel analysis (dashed). The first five components exceed the threshold. (B) Absolute factor loadings for the first five principal components, grouped by domain. Religion and politics questions load strongly on single factors, while lifestyle and background questions show more diffuse loadings across factors."
+#| fig-cap: "Factor structure of belief space. (A) Scree plot comparing observed eigenvalues (solid) against the 95th percentile from parallel analysis (dashed). The first five components exceed the threshold. (B) Absolute factor loadings for the first five principal components, grouped by domain. Religion questions load most coherently on a single factor, while politics and other domains show more distributed loadings."
 #| fig-width: 12
 #| fig-height: 5
 
@@ -1147,6 +1147,137 @@ plt.show()
 ```
 
 @fig-norms shows domain-level means for key question properties. Religion and identity questions were rated as most personally revealing, while politics and religion were rated as most divisive. Lifestyle and preference questions were rated as least deep and least controversial. This variation in perceived question properties aligns with the differential transfer effects observed across domains and validates that experimenter-assigned domain labels capture meaningful psychological distinctions in how people perceive different types of beliefs.
+
+## Question Feature Moderator Analysis {#sec-moderators}
+
+To test whether question-level features moderated generalization, we fit eight mixed-effects logistic regression models, one for each normative dimension. Each model predicted binary commonality judgments from the interaction of the (z-scored) question rating with stance condition and interaction type, with random intercepts for participants and questions:
+
+$$\text{commonality} \sim \text{rating} \times \text{stance} \times \text{interaction\_type} + (1|\text{participant}) + (1|\text{question})$$
+
+The critical test is the three-way interaction, which would indicate that a question feature differentially affects generalization across stance and interaction conditions.
+
+```{python}
+#| label: moderator-data-prep
+#| output: false
+
+# Prepare data for moderator analysis
+import pandas as pd
+import numpy as np
+from pathlib import Path
+
+base_dir = Path.cwd().resolve()
+while base_dir.name and not (base_dir / 'data').exists():
+    base_dir = base_dir.parent
+data_dir = base_dir / 'data'
+
+# Load responses and questions
+responses = pd.read_csv(data_dir / 'responses.csv', low_memory=False)
+questions = pd.read_csv(data_dir / 'questions.csv')
+
+# Filter: valid trials, exclude observed question (generalization only)
+df = responses[responses['matchedTolerance'].notna()].copy()
+df = df[df['question'] != df['matchedIdx']]
+
+# Join question norms
+norm_cols = ['norm_personal', 'norm_relevant', 'norm_divisive', 'norm_deep',
+             'norm_learn', 'norm_interest', 'norm_likely', 'norm_same']
+df = df.merge(questions[['num'] + norm_cols], left_on='question', right_on='num', how='left')
+
+# Z-score norm columns
+for col in norm_cols:
+    df[col + '_z'] = (df[col] - df[col].mean()) / df[col].std()
+
+# Contrast code predictors: centered at 0
+df['stance_c'] = df['stance'].map({'shared': 0.5, 'opposing': -0.5})
+df['experiment_c'] = df['experiment'].map({'chat': 0.5, 'no-chat': -0.5})
+
+# Save for R
+df.to_csv('/tmp/moderator_df.csv', index=False)
+print(f"Saved {len(df)} rows for moderator analysis")
+```
+
+```{r}
+#| label: tbl-moderators
+#| tbl-cap: "Question feature moderator analysis. Eight mixed-effects models tested whether question-level normative ratings moderated commonality judgments. Shown are the three-way interaction coefficients (rating × stance × interaction type). No features showed reliable moderation after FDR correction for multiple comparisons."
+
+library(lme4)
+library(lmerTest)
+library(dplyr)
+library(knitr)
+
+# Load prepared data
+df <- read.csv('/tmp/moderator_df.csv')
+
+# Define norm columns and labels
+norm_cols <- c('norm_personal_z', 'norm_relevant_z', 'norm_divisive_z', 'norm_deep_z',
+               'norm_learn_z', 'norm_interest_z', 'norm_likely_z', 'norm_same_z')
+norm_labels <- c('Personal', 'Relevant', 'Divisive', 'Deep',
+                 'Learn', 'Interest', 'Likely', 'Agreement')
+
+# Fit 8 models and extract 3-way interaction
+results <- data.frame(
+  Feature = character(),
+  Beta = numeric(),
+  SE = numeric(),
+  z = numeric(),
+  p = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (i in seq_along(norm_cols)) {
+  col <- norm_cols[i]
+  label <- norm_labels[i]
+
+  # Build formula
+  formula <- as.formula(paste0(
+    'predictShared ~ ', col, ' * stance_c * experiment_c + (1|pid) + (1|question)'
+  ))
+
+  # Fit model with error handling
+  model <- tryCatch({
+    glmer(formula, data = df, family = binomial,
+          control = glmerControl(optimizer = 'bobyqa', optCtrl = list(maxfun = 100000)))
+  }, error = function(e) NULL)
+
+  if (!is.null(model)) {
+    coefs <- summary(model)$coefficients
+    # Find the 3-way interaction row
+    int_row <- grep(paste0(col, ':stance_c:experiment_c'), rownames(coefs))
+    if (length(int_row) > 0) {
+      results <- rbind(results, data.frame(
+        Feature = label,
+        Beta = coefs[int_row, 'Estimate'],
+        SE = coefs[int_row, 'Std. Error'],
+        z = coefs[int_row, 'z value'],
+        p = coefs[int_row, 'Pr(>|z|)'],
+        stringsAsFactors = FALSE
+      ))
+    }
+  }
+}
+
+# FDR correction
+results$p_fdr <- p.adjust(results$p, method = 'BH')
+
+# Format for display
+results_display <- results %>%
+  mutate(
+    Beta = sprintf('%.3f', Beta),
+    SE = sprintf('%.3f', SE),
+    z = sprintf('%.2f', z),
+    p = sprintf('%.3f', p),
+    p_fdr = sprintf('%.3f', p_fdr),
+    sig = ifelse(as.numeric(p) < 0.05, '*', ''),
+    sig_fdr = ifelse(as.numeric(p_fdr) < 0.05, '*', '')
+  ) %>%
+  select(Feature, Beta, SE, z, p, sig, p_fdr, sig_fdr)
+
+kable(results_display,
+      col.names = c('Feature', 'β', 'SE', 'z', 'p', '', 'p (FDR)', ''),
+      align = c('l', 'r', 'r', 'r', 'r', 'c', 'r', 'c'))
+```
+
+@tbl-moderators shows the results of the moderator analysis. A few features showed nominally significant three-way interactions (p < .05 uncorrected), but given the eight comparisons, none survived FDR correction, and effect sizes were small. We therefore conclude that question-level features did not reliably moderate generalization patterns.
 
 ## Domain-Specific Generalization Gradients {#sec-domain-gradients}
 
