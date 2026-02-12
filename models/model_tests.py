@@ -34,10 +34,10 @@ class TestModelSetup:
 
     def test_repr(self):
         """Repr should show key parameters."""
-        assert 'k=4' in repr(CommonalityModel(k=4))
-        assert 'Bayesian' in repr(CommonalityModel(k=4, lambda_mix=0.0))
-        assert 'SimilarityProjection' in repr(CommonalityModel(lambda_mix=1.0))
-        assert 'λ=0.50' in repr(CommonalityModel(k=4, lambda_mix=0.5))
+        assert "k=4" in repr(CommonalityModel(k=4))
+        assert "Bayesian" in repr(CommonalityModel(k=4, lambda_mix=0.0))
+        assert "SimilarityProjection" in repr(CommonalityModel(lambda_mix=1.0))
+        assert "λ=0.50" in repr(CommonalityModel(k=4, lambda_mix=0.5))
 
 
 class TestPredictions:
@@ -92,9 +92,15 @@ class TestModelBehavior:
     def test_lambda_mixture_interpolates(self):
         """λ=0.5 should give predictions between λ=0 and λ=1."""
         r_self = np.random.uniform(1, 5, 35)
-        preds_0 = CommonalityModel(k=5, lambda_mix=0.0, epsilon=0.0).predict(0, 3.0, r_self)
-        preds_1 = CommonalityModel(k=5, lambda_mix=1.0, epsilon=0.0).predict(0, 3.0, r_self)
-        preds_half = CommonalityModel(k=5, lambda_mix=0.5, epsilon=0.0).predict(0, 3.0, r_self)
+        preds_0 = CommonalityModel(k=5, lambda_mix=0.0, epsilon=0.0).predict(
+            0, 3.0, r_self
+        )
+        preds_1 = CommonalityModel(k=5, lambda_mix=1.0, epsilon=0.0).predict(
+            0, 3.0, r_self
+        )
+        preds_half = CommonalityModel(k=5, lambda_mix=0.5, epsilon=0.0).predict(
+            0, 3.0, r_self
+        )
         # Mixture should be close to average
         expected = 0.5 * preds_0 + 0.5 * preds_1
         assert np.allclose(preds_half, expected, atol=0.01)
@@ -103,10 +109,14 @@ class TestModelBehavior:
         """Similarity projection (λ=1) should produce gradients based on self-response similarity."""
         # Self responds identically on q0 and q1, differently on q2
         r_self = np.array([3.0, 3.0, 1.0] + [3.0] * 32)
-        model = CommonalityModel(lambda_mix=1.0, epsilon=0.0)  # Pure similarity projection
+        model = CommonalityModel(
+            lambda_mix=1.0, epsilon=0.0
+        )  # Pure similarity projection
         preds = model.predict(0, 3.0, r_self)  # Observe match on q0
         # q1 (same self-response as q0) should have higher prediction than q2 (different)
-        assert preds[1] > preds[2], "Self-similar questions should have higher predictions"
+        assert (
+            preds[1] > preds[2]
+        ), "Self-similar questions should have higher predictions"
         # Predictions should vary (not uniform)
         assert preds.std() > 0.01, "Predictions should vary based on self-similarity"
 
@@ -196,24 +206,28 @@ class TestPerceivedResponse:
         import pandas as pd
         from models.model import prepare_evaluation_data
 
-        df = pd.read_csv('data/responses.csv', low_memory=False)
-        chat_data = df[df['experiment'] == 'chat']
+        df = pd.read_csv("data/responses.csv", low_memory=False)
+        chat_data = df[df["experiment"] == "chat"]
 
         # Find a participant where perceived != ground truth
-        for pid in chat_data['pid'].unique():
-            subj = chat_data[chat_data['pid'] == pid]
-            obs_row = subj[subj['question_type'] == 'observed']
+        for pid in chat_data["pid"].unique():
+            subj = chat_data[chat_data["pid"] == pid]
+            obs_row = subj[subj["question_type"] == "observed"]
             if len(obs_row) == 0:
                 continue
-            perceived = obs_row['postChatResponse'].iloc[0]
-            ground_truth = obs_row['partner_response'].iloc[0]
-            if pd.notna(perceived) and pd.notna(ground_truth) and perceived != ground_truth:
+            perceived = obs_row["postChatResponse"].iloc[0]
+            ground_truth = obs_row["partner_response"].iloc[0]
+            if (
+                pd.notna(perceived)
+                and pd.notna(ground_truth)
+                and perceived != ground_truth
+            ):
                 # Found a mismatch - run evaluation on just this participant
                 eval_data = prepare_evaluation_data(subj)
-                if len(eval_data['r_partners']) > 0:
+                if len(eval_data["r_partners"]) > 0:
                     # Should use perceived, not ground truth
-                    assert eval_data['r_partners'][0] == perceived
-                    assert eval_data['r_partners'][0] != ground_truth
+                    assert eval_data["r_partners"][0] == perceived
+                    assert eval_data["r_partners"][0] != ground_truth
                     return  # Test passed
         pytest.skip("No chat participants with perceived != ground truth found")
 
@@ -222,14 +236,14 @@ class TestPerceivedResponse:
         import pandas as pd
         from models.model import prepare_evaluation_data
 
-        df = pd.read_csv('data/responses.csv', low_memory=False)
-        nochat_data = df[df['experiment'] == 'no-chat']
+        df = pd.read_csv("data/responses.csv", low_memory=False)
+        nochat_data = df[df["experiment"] == "no-chat"]
         eval_data = prepare_evaluation_data(nochat_data)
 
         # Should have some participants
-        assert len(eval_data['r_partners']) > 0
+        assert len(eval_data["r_partners"]) > 0
         # All values should be valid Likert responses (1-5)
-        assert np.all((eval_data['r_partners'] >= 1) & (eval_data['r_partners'] <= 5))
+        assert np.all((eval_data["r_partners"] >= 1) & (eval_data["r_partners"] <= 5))
 
 
 class TestDeltaObservation:
@@ -253,8 +267,12 @@ class TestDeltaObservation:
     def test_delta_gives_sharper_predictions(self):
         """Delta observation should give more confident predictions than Gaussian."""
         r_self = np.random.uniform(1, 5, 35)
-        preds_delta = CommonalityModel(k=5, sigma_obs=0.0, epsilon=0.1).predict(0, 3.0, r_self)
-        preds_gauss = CommonalityModel(k=5, sigma_obs=1.0, epsilon=0.1).predict(0, 3.0, r_self)
+        preds_delta = CommonalityModel(k=5, sigma_obs=0.0, epsilon=0.1).predict(
+            0, 3.0, r_self
+        )
+        preds_gauss = CommonalityModel(k=5, sigma_obs=1.0, epsilon=0.1).predict(
+            0, 3.0, r_self
+        )
         # Delta should have more extreme predictions (further from 0.5)
         dist_delta = np.abs(preds_delta - 0.5).mean()
         dist_gauss = np.abs(preds_gauss - 0.5).mean()
@@ -295,15 +313,21 @@ class TestDataIntegrity:
         'different_domain', causing gradient calculations to return NaN.
         """
         import pandas as pd
-        df = pd.read_csv('data/responses.csv', low_memory=False)
 
-        question_types = set(df['question_type'].unique())
-        assert 'different_domain' in question_types, \
-            "question_type should contain 'different_domain'"
-        assert 'diff_domain' not in question_types, \
-            "question_type should NOT contain 'diff_domain' (old buggy value)"
-        assert question_types == {'observed', 'same_domain', 'different_domain'}, \
-            f"Unexpected question_type values: {question_types}"
+        df = pd.read_csv("data/responses.csv", low_memory=False)
+
+        question_types = set(df["question_type"].unique())
+        assert (
+            "different_domain" in question_types
+        ), "question_type should contain 'different_domain'"
+        assert (
+            "diff_domain" not in question_types
+        ), "question_type should NOT contain 'diff_domain' (old buggy value)"
+        assert question_types == {
+            "observed",
+            "same_domain",
+            "different_domain",
+        }, f"Unexpected question_type values: {question_types}"
 
     def test_compute_question_type_function(self):
         """Directly test compute_question_type returns 'different_domain'.
@@ -312,22 +336,39 @@ class TestDataIntegrity:
         checking the output CSV.
         """
         import sys
-        sys.path.insert(0, 'data/raw')
+
+        sys.path.insert(0, "data/raw")
         from preprocess import compute_question_type
 
         # Mock row for different domain case
-        row = {'question': 5, 'matchedIdx': 1, 'preChatDomain': 'politics', 'matchedDomain': 'religion'}
+        row = {
+            "question": 5,
+            "matchedIdx": 1,
+            "preChatDomain": "politics",
+            "matchedDomain": "religion",
+        }
         result = compute_question_type(row)
-        assert result == 'different_domain', \
-            f"compute_question_type should return 'different_domain', got '{result}'"
+        assert (
+            result == "different_domain"
+        ), f"compute_question_type should return 'different_domain', got '{result}'"
 
         # Test same domain case
-        row_same = {'question': 5, 'matchedIdx': 1, 'preChatDomain': 'politics', 'matchedDomain': 'politics'}
-        assert compute_question_type(row_same) == 'same_domain'
+        row_same = {
+            "question": 5,
+            "matchedIdx": 1,
+            "preChatDomain": "politics",
+            "matchedDomain": "politics",
+        }
+        assert compute_question_type(row_same) == "same_domain"
 
         # Test observed case
-        row_obs = {'question': 1, 'matchedIdx': 1, 'preChatDomain': 'politics', 'matchedDomain': 'politics'}
-        assert compute_question_type(row_obs) == 'observed'
+        row_obs = {
+            "question": 1,
+            "matchedIdx": 1,
+            "preChatDomain": "politics",
+            "matchedDomain": "politics",
+        }
+        assert compute_question_type(row_obs) == "observed"
 
     def test_nochat_has_observed_response(self):
         """No-chat participants should have observedResponse (what they were shown).
@@ -336,17 +377,21 @@ class TestDataIntegrity:
         making it impossible to run model evaluation on no-chat data.
         """
         import pandas as pd
-        df = pd.read_csv('data/responses.csv', low_memory=False)
-        nochat = df[df['experiment'] == 'no-chat']
 
-        assert 'observedResponse' in nochat.columns, \
-            "observedResponse column should exist"
-        assert nochat['observedResponse'].notna().sum() > 0, \
-            "No-chat should have non-null observedResponse values"
+        df = pd.read_csv("data/responses.csv", low_memory=False)
+        nochat = df[df["experiment"] == "no-chat"]
+
+        assert (
+            "observedResponse" in nochat.columns
+        ), "observedResponse column should exist"
+        assert (
+            nochat["observedResponse"].notna().sum() > 0
+        ), "No-chat should have non-null observedResponse values"
         # All non-null values should be valid Likert (1-5)
-        valid_obs = nochat['observedResponse'].dropna()
-        assert ((valid_obs >= 1) & (valid_obs <= 5)).all(), \
-            "observedResponse values should be in [1, 5]"
+        valid_obs = nochat["observedResponse"].dropna()
+        assert (
+            (valid_obs >= 1) & (valid_obs <= 5)
+        ).all(), "observedResponse values should be in [1, 5]"
 
     def test_stance_column_exists_and_correct(self):
         """stance column should exist and be derived from matchedTolerance.
@@ -354,20 +399,25 @@ class TestDataIntegrity:
         stance = 'shared' if matchedTolerance <= 1, else 'opposing'
         """
         import pandas as pd
-        df = pd.read_csv('data/responses.csv', low_memory=False)
 
-        assert 'stance' in df.columns, "stance column should exist"
-        assert set(df['stance'].unique()) == {'shared', 'opposing'}, \
-            f"stance should be 'shared' or 'opposing', got: {df['stance'].unique()}"
+        df = pd.read_csv("data/responses.csv", low_memory=False)
+
+        assert "stance" in df.columns, "stance column should exist"
+        assert set(df["stance"].unique()) == {
+            "shared",
+            "opposing",
+        }, f"stance should be 'shared' or 'opposing', got: {df['stance'].unique()}"
 
         # Verify stance is correctly derived from matchedTolerance
-        shared = df[df['stance'] == 'shared']
-        opposing = df[df['stance'] == 'opposing']
+        shared = df[df["stance"] == "shared"]
+        opposing = df[df["stance"] == "opposing"]
 
-        assert (shared['matchedTolerance'] <= 1).all(), \
-            "All 'shared' stance rows should have matchedTolerance <= 1"
-        assert (opposing['matchedTolerance'] > 1).all(), \
-            "All 'opposing' stance rows should have matchedTolerance > 1"
+        assert (
+            shared["matchedTolerance"] <= 1
+        ).all(), "All 'shared' stance rows should have matchedTolerance <= 1"
+        assert (
+            opposing["matchedTolerance"] > 1
+        ).all(), "All 'opposing' stance rows should have matchedTolerance > 1"
 
     def test_gradient_calculation_returns_valid_value(self):
         """Gradient calculation should return a valid float, not NaN.
@@ -378,15 +428,17 @@ class TestDataIntegrity:
         import pandas as pd
         from analysis.utils import compute_gradient
 
-        df = pd.read_csv('data/responses.csv', low_memory=False)
-        nochat = df[df['experiment'] == 'no-chat']
+        df = pd.read_csv("data/responses.csv", low_memory=False)
+        nochat = df[df["experiment"] == "no-chat"]
 
-        gradient = compute_gradient(nochat, 'participant_binary_prediction')
+        gradient = compute_gradient(nochat, "participant_binary_prediction")
 
-        assert not np.isnan(gradient), \
-            "Gradient should not be NaN (check question_type column values)"
-        assert -1 < gradient < 1, \
-            f"Gradient should be in reasonable range, got: {gradient}"
+        assert not np.isnan(
+            gradient
+        ), "Gradient should not be NaN (check question_type column values)"
+        assert (
+            -1 < gradient < 1
+        ), f"Gradient should be in reasonable range, got: {gradient}"
 
     def test_nochat_evaluation_produces_predictions(self):
         """Model evaluation on no-chat data should produce predictions.
@@ -397,16 +449,18 @@ class TestDataIntegrity:
         import pandas as pd
         from models.model import prepare_evaluation_data
 
-        df = pd.read_csv('data/responses.csv', low_memory=False)
-        nochat = df[df['experiment'] == 'no-chat']
+        df = pd.read_csv("data/responses.csv", low_memory=False)
+        nochat = df[df["experiment"] == "no-chat"]
 
         eval_data = prepare_evaluation_data(nochat)
 
-        assert len(eval_data['r_partners']) > 100, \
-            f"Should have many no-chat participants, got: {len(eval_data['r_partners'])}"
-        assert len(eval_data['obs_qs']) == len(eval_data['r_partners']), \
-            "Arrays should have matching lengths"
+        assert (
+            len(eval_data["r_partners"]) > 100
+        ), f"Should have many no-chat participants, got: {len(eval_data['r_partners'])}"
+        assert len(eval_data["obs_qs"]) == len(
+            eval_data["r_partners"]
+        ), "Arrays should have matching lengths"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

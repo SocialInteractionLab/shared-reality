@@ -9,7 +9,9 @@ import random
 import pandas as pd
 
 
-def create_chat_prompt(conversation: str, questions_df: pd.DataFrame, chat_topic: str) -> str:
+def create_chat_prompt(
+    conversation: str, questions_df: pd.DataFrame, chat_topic: str
+) -> str:
     """Create prompt for predicting responses from conversation content.
 
     Args:
@@ -29,11 +31,17 @@ def create_chat_prompt(conversation: str, questions_df: pd.DataFrame, chat_topic
     rng.shuffle(indices)
 
     # Build question list with [DISCUSSED] marker
-    questions_list = "\n".join([
-        f"{idx}. {questions_df.iloc[idx]['questionText']}" +
-        (" [DISCUSSED]" if questions_df.iloc[idx]['questionText'] == chat_topic else "")
-        for idx in indices
-    ])
+    questions_list = "\n".join(
+        [
+            f"{idx}. {questions_df.iloc[idx]['questionText']}"
+            + (
+                " [DISCUSSED]"
+                if questions_df.iloc[idx]["questionText"] == chat_topic
+                else ""
+            )
+            for idx in indices
+        ]
+    )
 
     return f"""Predict how two people (Cat and Dog) would respond to survey questions based on their conversation.
 
@@ -96,10 +104,9 @@ def create_prior_prompt(questions_df: pd.DataFrame, chat_topic: str) -> str:
     indices = list(range(len(questions_df)))
     rng.shuffle(indices)
 
-    questions_list = "\n".join([
-        f"{idx}. {questions_df.iloc[idx]['questionText']}"
-        for idx in indices
-    ])
+    questions_list = "\n".join(
+        [f"{idx}. {questions_df.iloc[idx]['questionText']}" for idx in indices]
+    )
 
     return f"""You are making predictions about people's beliefs on various topics.
 
@@ -135,7 +142,7 @@ def create_nochat_prompt(
     observed_question: str,
     partner_response: int,
     questions_df: pd.DataFrame,
-    predict_for: str = "partner"
+    predict_for: str = "partner",
 ) -> str:
     """Create prompt for predicting responses from a single observed Likert response.
 
@@ -158,11 +165,17 @@ def create_nochat_prompt(
     rng.shuffle(indices)
 
     # Build question list marking which one was observed
-    questions_list = "\n".join([
-        f"{idx}. {questions_df.iloc[idx]['questionText']}" +
-        (" [OBSERVED]" if questions_df.iloc[idx]['questionText'] == observed_question else "")
-        for idx in indices
-    ])
+    questions_list = "\n".join(
+        [
+            f"{idx}. {questions_df.iloc[idx]['questionText']}"
+            + (
+                " [OBSERVED]"
+                if questions_df.iloc[idx]["questionText"] == observed_question
+                else ""
+            )
+            for idx in indices
+        ]
+    )
 
     # Map Likert response to descriptive label
     likert_labels = {
@@ -170,7 +183,7 @@ def create_nochat_prompt(
         2: "2 (Probably Not / Disagree)",
         3: "3 (Unsure / Neutral)",
         4: "4 (Probably Yes / Agree)",
-        5: "5 (Definitely Yes / Strongly Agree)"
+        5: "5 (Definitely Yes / Strongly Agree)",
     }
     response_label = likert_labels.get(partner_response, str(partner_response))
 
@@ -217,7 +230,9 @@ Return JSON with this structure (using question indices 0-{len(questions_df)-1})
 }}"""
 
 
-def create_pshared_prompt(conversation: str, questions_df: pd.DataFrame, chat_topic: str, tau: int = 2) -> str:
+def create_pshared_prompt(
+    conversation: str, questions_df: pd.DataFrame, chat_topic: str, tau: int = 2
+) -> str:
     """Create prompt for directly predicting P(shared) - probability of agreement.
 
     Instead of predicting full probability distributions, this prompt asks the LLM
@@ -242,11 +257,17 @@ def create_pshared_prompt(conversation: str, questions_df: pd.DataFrame, chat_to
     rng.shuffle(indices)
 
     # Build question list with [DISCUSSED] marker and domain labels
-    questions_list = "\n".join([
-        f"{idx}. [{questions_df.iloc[idx]['domain'].upper()}] {questions_df.iloc[idx]['questionText']}" +
-        (" [DISCUSSED]" if questions_df.iloc[idx]['questionText'] == chat_topic else "")
-        for idx in indices
-    ])
+    questions_list = "\n".join(
+        [
+            f"{idx}. [{questions_df.iloc[idx]['domain'].upper()}] {questions_df.iloc[idx]['questionText']}"
+            + (
+                " [DISCUSSED]"
+                if questions_df.iloc[idx]["questionText"] == chat_topic
+                else ""
+            )
+            for idx in indices
+        ]
+    )
 
     return f"""You are predicting whether two people (Cat and Dog) would AGREE on various survey questions.
 

@@ -16,7 +16,7 @@ def load_questions() -> pd.DataFrame:
     """
     df = pd.read_csv(DATA_DIR / "questions.csv")
     # Rename columns for compatibility
-    df = df.rename(columns={'text': 'questionText'})
+    df = df.rename(columns={"text": "questionText"})
     return df
 
 
@@ -29,9 +29,9 @@ def load_unified_data() -> pd.DataFrame:
     """
     df = pd.read_csv(DATA_DIR / "responses.csv", low_memory=False)
     # Add column aliases for backward compatibility
-    df['own_response'] = df['preChatResponse']
-    df['question_domain'] = df['preChatDomain']
-    df['matched_question'] = df['matchedIdx']
+    df["own_response"] = df["preChatResponse"]
+    df["question_domain"] = df["preChatDomain"]
+    df["matched_question"] = df["matchedIdx"]
     return df
 
 
@@ -46,11 +46,11 @@ def load_ground_truth() -> dict:
 
     ground_truth = {}
     for _, row in df.iterrows():
-        pid = row['pid']
+        pid = row["pid"]
         if pid not in ground_truth:
             ground_truth[pid] = {}
         # Use question index as key
-        ground_truth[pid][row['question']] = row['own_response']
+        ground_truth[pid][row["question"]] = row["own_response"]
 
     return ground_truth
 
@@ -65,13 +65,25 @@ def load_nochat_observations() -> pd.DataFrame:
     questions = load_questions()
 
     # Filter to no-chat, matched rows only
-    nochat_matched = df[(df['experiment'] == 'no-chat') & (df['is_matched'] == True)].copy()
+    nochat_matched = df[
+        (df["experiment"] == "no-chat") & (df["is_matched"] == True)
+    ].copy()
 
     # Get question text for each matched question
-    q_text = questions.set_index('num')['questionText'].to_dict()
-    nochat_matched['matched_question_text'] = nochat_matched['matched_question'].map(q_text)
+    q_text = questions.set_index("num")["questionText"].to_dict()
+    nochat_matched["matched_question_text"] = nochat_matched["matched_question"].map(
+        q_text
+    )
 
-    return nochat_matched[['pid', 'stance', 'matched_question', 'matched_question_text', 'partner_response']]
+    return nochat_matched[
+        [
+            "pid",
+            "stance",
+            "matched_question",
+            "matched_question_text",
+            "partner_response",
+        ]
+    ]
 
 
 def load_dialogue_data(bin_size: str = "15s") -> pd.DataFrame:
@@ -86,7 +98,9 @@ def load_dialogue_data(bin_size: str = "15s") -> pd.DataFrame:
     if bin_size == "15s":
         path = DATA_DIR / "15s-binned-complete-timecourse.csv"
     else:
-        raise ValueError(f"Unsupported bin_size: {bin_size}. Only '15s' available in paper/data/")
+        raise ValueError(
+            f"Unsupported bin_size: {bin_size}. Only '15s' available in paper/data/"
+        )
 
     return pd.read_csv(path)
 
@@ -94,8 +108,8 @@ def load_dialogue_data(bin_size: str = "15s") -> pd.DataFrame:
 def normalize_domain(domain: str) -> str:
     """Normalize domain names for comparison."""
     if pd.isna(domain):
-        return ''
-    domain_map = {'moral': 'morality', 'morality': 'morality'}
+        return ""
+    domain_map = {"moral": "morality", "morality": "morality"}
     d = str(domain).lower().strip()
     return domain_map.get(d, d)
 
@@ -103,18 +117,18 @@ def normalize_domain(domain: str) -> str:
 def add_question_categories(df: pd.DataFrame) -> pd.DataFrame:
     """Add question category column (matched/same_domain/different_domain)."""
     df = df.copy()
-    df['question_domain_norm'] = df['question_domain'].apply(normalize_domain)
+    df["question_domain_norm"] = df["question_domain"].apply(normalize_domain)
 
-    if 'matched_domain' in df.columns:
-        df['matched_domain_norm'] = df['matched_domain'].apply(normalize_domain)
+    if "matched_domain" in df.columns:
+        df["matched_domain_norm"] = df["matched_domain"].apply(normalize_domain)
 
         def categorize(row):
-            if row['is_matched']:
-                return 'matched'
-            elif row['question_domain_norm'] == row['matched_domain_norm']:
-                return 'same_domain'
-            return 'different_domain'
+            if row["is_matched"]:
+                return "matched"
+            elif row["question_domain_norm"] == row["matched_domain_norm"]:
+                return "same_domain"
+            return "different_domain"
 
-        df['question_category'] = df.apply(categorize, axis=1)
+        df["question_category"] = df.apply(categorize, axis=1)
 
     return df

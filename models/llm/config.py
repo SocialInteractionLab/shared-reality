@@ -16,6 +16,7 @@ BATCH_DIR.mkdir(exist_ok=True)
 # Load .env file if present
 try:
     from dotenv import load_dotenv
+
     load_dotenv(PAPER_DIR / ".env")
 except ImportError:
     pass  # dotenv not installed, rely on environment variables

@@ -55,15 +55,20 @@ N_QUESTIONS = 35
 
 # Domain structure (for evaluation)
 DOMAIN_RANGES = {
-    'arbitrary': (0, 5), 'background': (5, 10), 'identity': (10, 15),
-    'morality': (15, 20), 'politics': (20, 25), 'preferences': (25, 30),
-    'religion': (30, 35),
+    "arbitrary": (0, 5),
+    "background": (5, 10),
+    "identity": (10, 15),
+    "morality": (15, 20),
+    "politics": (20, 25),
+    "preferences": (25, 30),
+    "religion": (30, 35),
 }
 
 
 # =============================================================================
 # INFERENCE (JAX-accelerated)
 # =============================================================================
+
 
 @jit
 def _project_to_factors(responses, loadings, means):
@@ -96,7 +101,9 @@ def _posterior_update_delta(L_obs, r_obs, mu_obs, prior_mean, prior_cov):
 
 
 @jit
-def _posterior_update_gaussian(L_obs, r_obs, mu_obs, prior_mean, prior_cov, obs_variance):
+def _posterior_update_gaussian(
+    L_obs, r_obs, mu_obs, prior_mean, prior_cov, obs_variance
+):
     """
     Standard Bayesian update with Gaussian observation noise.
 
@@ -107,12 +114,16 @@ def _posterior_update_gaussian(L_obs, r_obs, mu_obs, prior_mean, prior_cov, obs_
     obs_precision = jnp.outer(L_obs, L_obs) / obs_variance
     post_precision = prior_precision + obs_precision
     post_cov = jnp.linalg.inv(post_precision)
-    post_mean = post_cov @ (prior_precision @ prior_mean + L_obs * r_centered / obs_variance)
+    post_mean = post_cov @ (
+        prior_precision @ prior_mean + L_obs * r_centered / obs_variance
+    )
     return post_mean, post_cov
 
 
 @jit
-def _predict_match_probs(loadings, means, post_mean, post_cov, r_self, threshold, obs_variance):
+def _predict_match_probs(
+    loadings, means, post_mean, post_cov, r_self, threshold, obs_variance
+):
     """
     Predict P(|r_partner - r_self| ≤ τ) for each question.
 
@@ -129,8 +140,7 @@ def _predict_match_probs(loadings, means, post_mean, post_cov, r_self, threshold
 
 @jit
 def _predict_bayesian(
-    obs_q, r_obs, r_self, loadings, means,
-    prior_cov, obs_variance, threshold
+    obs_q, r_obs, r_self, loadings, means, prior_cov, obs_variance, threshold
 ):
     """
     Bayesian factor model prediction for a single participant.
@@ -148,8 +158,10 @@ def _predict_bayesian(
     post_mean, post_cov = jax.lax.cond(
         obs_variance < 1e-8,
         lambda _: _posterior_update_delta(L_obs, r_obs, mu_obs, prior_mean, prior_cov),
-        lambda _: _posterior_update_gaussian(L_obs, r_obs, mu_obs, prior_mean, prior_cov, obs_variance),
-        operand=None
+        lambda _: _posterior_update_gaussian(
+            L_obs, r_obs, mu_obs, prior_mean, prior_cov, obs_variance
+        ),
+        operand=None,
     )
 
     # Predict match probabilities
@@ -164,7 +176,9 @@ def _predict_bayesian(
 
 
 @jit
-def _predict_similarity_projection(obs_q, r_obs, r_self, base_rate, projection_weight, threshold):
+def _predict_similarity_projection(
+    obs_q, r_obs, r_self, base_rate, projection_weight, threshold
+):
     """
     Similarity-modulated projection with self-transfer.
 
@@ -215,32 +229,57 @@ def _predict_similarity_projection(obs_q, r_obs, r_self, base_rate, projection_w
 
 @jit
 def _predict_single(
-    obs_q, r_obs, r_self, loadings, means,
-    prior_cov, obs_variance, threshold,
-    lambda_mix, base_rate, projection_weight
+    obs_q,
+    r_obs,
+    r_self,
+    loadings,
+    means,
+    prior_cov,
+    obs_variance,
+    threshold,
+    lambda_mix,
+    base_rate,
+    projection_weight,
 ):
     """Combined prediction: (1-λ) × Bayesian + λ × SimilarityProjection."""
     p_bayes = _predict_bayesian(
-        obs_q, r_obs, r_self, loadings, means,
-        prior_cov, obs_variance, threshold
+        obs_q, r_obs, r_self, loadings, means, prior_cov, obs_variance, threshold
     )
-    p_proj = _predict_similarity_projection(obs_q, r_obs, r_self, base_rate, projection_weight, threshold)
+    p_proj = _predict_similarity_projection(
+        obs_q, r_obs, r_self, base_rate, projection_weight, threshold
+    )
 
     return (1 - lambda_mix) * p_bayes + lambda_mix * p_proj
 
 
 @jit
 def _predict_batch(
-    obs_qs, r_partners, r_selves, loadings, means,
-    prior_cov, obs_variance, threshold,
-    lambda_mix, base_rate, projection_weight
+    obs_qs,
+    r_partners,
+    r_selves,
+    loadings,
+    means,
+    prior_cov,
+    obs_variance,
+    threshold,
+    lambda_mix,
+    base_rate,
+    projection_weight,
 ):
     """Batch prediction over participants using vmap."""
     return vmap(
         lambda oq, rp, rs: _predict_single(
-            oq, rp, rs, loadings, means,
-            prior_cov, obs_variance, threshold,
-            lambda_mix, base_rate, projection_weight
+            oq,
+            rp,
+            rs,
+            loadings,
+            means,
+            prior_cov,
+            obs_variance,
+            threshold,
+            lambda_mix,
+            base_rate,
+            projection_weight,
         )
     )(obs_qs, r_partners, r_selves)
 
@@ -249,10 +288,13 @@ def _predict_batch(
 # DATA LOADING
 # =============================================================================
 
+
 def load_responses() -> pd.DataFrame:
     """Load response matrix (participants × 35 questions)."""
     df = pd.read_csv(DATA_DIR / "responses.csv", low_memory=False)
-    return df.pivot_table(index='pid', columns='question', values='preChatResponse', aggfunc='first')
+    return df.pivot_table(
+        index="pid", columns="question", values="preChatResponse", aggfunc="first"
+    )
 
 
 def load_correlation_matrix() -> np.ndarray:
@@ -281,6 +323,7 @@ def load_evaluation_data() -> pd.DataFrame:
 # =============================================================================
 # MODEL
 # =============================================================================
+
 
 class CommonalityModel:
     """
@@ -375,17 +418,25 @@ class CommonalityModel:
             35-element array of match probabilities
         """
         preds = _predict_single(
-            obs_q, r_partner, jnp.array(r_self),
-            self._loadings, self._means,
-            self._prior_cov, self._obs_variance, self._threshold,
-            self._lambda_mix, self._base_rate, self._projection_weight
+            obs_q,
+            r_partner,
+            jnp.array(r_self),
+            self._loadings,
+            self._means,
+            self._prior_cov,
+            self._obs_variance,
+            self._threshold,
+            self._lambda_mix,
+            self._base_rate,
+            self._projection_weight,
         )
         # Apply lapse rate
         preds = (1 - self.epsilon) * preds + self.epsilon * 0.5
         return np.asarray(preds)
 
-    def predict_batch(self, obs_qs: np.ndarray, r_partners: np.ndarray,
-                      r_selves: np.ndarray) -> np.ndarray:
+    def predict_batch(
+        self, obs_qs: np.ndarray, r_partners: np.ndarray, r_selves: np.ndarray
+    ) -> np.ndarray:
         """
         Vectorized prediction for multiple participants.
 
@@ -401,9 +452,14 @@ class CommonalityModel:
             jnp.array(obs_qs),
             jnp.array(r_partners),
             jnp.array(r_selves),
-            self._loadings, self._means,
-            self._prior_cov, self._obs_variance, self._threshold,
-            self._lambda_mix, self._base_rate, self._projection_weight
+            self._loadings,
+            self._means,
+            self._prior_cov,
+            self._obs_variance,
+            self._threshold,
+            self._lambda_mix,
+            self._base_rate,
+            self._projection_weight,
         )
         # Apply lapse rate
         preds = (1 - self.epsilon) * preds + self.epsilon * 0.5
@@ -420,6 +476,7 @@ class CommonalityModel:
 # =============================================================================
 # FAST EVALUATION (for parameter fitting)
 # =============================================================================
+
 
 def prepare_evaluation_data(data: pd.DataFrame) -> dict:
     """
@@ -474,15 +531,17 @@ def prepare_evaluation_data(data: pd.DataFrame) -> dict:
         r_selves.append(r_self)
 
         for _, row in subj.iterrows():
-            participant_info.append({
-                "pid": pid,  # Actual participant ID (for bootstrapping)
-                "pid_idx": len(obs_qs) - 1,  # Index into batch arrays
-                "question": int(row["question"]) - 1,
-                "question_domain": row["preChatDomain"],
-                "stance": matched["stance"].iloc[0],
-                "question_type": row["question_type"],
-                "actual": row["participant_binary_prediction"],
-            })
+            participant_info.append(
+                {
+                    "pid": pid,  # Actual participant ID (for bootstrapping)
+                    "pid_idx": len(obs_qs) - 1,  # Index into batch arrays
+                    "question": int(row["question"]) - 1,
+                    "question_domain": row["preChatDomain"],
+                    "stance": matched["stance"].iloc[0],
+                    "question_type": row["question_type"],
+                    "actual": row["participant_binary_prediction"],
+                }
+            )
 
     return {
         "obs_qs": np.array(obs_qs),
@@ -500,16 +559,28 @@ def compute_gradient_error(pred_df: pd.DataFrame, human_rates: dict) -> float:
     Uses stance (shared/opposing) derived from matchedTolerance.
     """
     model_rates = {}
-    for qt in ['same_domain', 'different_domain']:
-        for stance in ['shared', 'opposing']:
-            cell = pred_df[(pred_df["question_type"] == qt) & (pred_df["stance"] == stance)]
+    for qt in ["same_domain", "different_domain"]:
+        for stance in ["shared", "opposing"]:
+            cell = pred_df[
+                (pred_df["question_type"] == qt) & (pred_df["stance"] == stance)
+            ]
             model_rates[(qt, stance)] = cell["pred_prob"].mean() if len(cell) else 0.5
 
-    model_gradient = (model_rates[('same_domain', 'shared')] - model_rates[('same_domain', 'opposing')]) - \
-                     (model_rates[('different_domain', 'shared')] - model_rates[('different_domain', 'opposing')])
+    model_gradient = (
+        model_rates[("same_domain", "shared")]
+        - model_rates[("same_domain", "opposing")]
+    ) - (
+        model_rates[("different_domain", "shared")]
+        - model_rates[("different_domain", "opposing")]
+    )
 
-    human_gradient = (human_rates[('same_domain', 'shared')] - human_rates[('same_domain', 'opposing')]) - \
-                     (human_rates[('different_domain', 'shared')] - human_rates[('different_domain', 'opposing')])
+    human_gradient = (
+        human_rates[("same_domain", "shared")]
+        - human_rates[("same_domain", "opposing")]
+    ) - (
+        human_rates[("different_domain", "shared")]
+        - human_rates[("different_domain", "opposing")]
+    )
 
     return abs(model_gradient - human_gradient)
 
@@ -544,27 +615,31 @@ def fit_parameters(
 
     # Only fit 3 params; σ_obs = 0 for exact observations (no-chat condition)
     bounds = {
-        'sigma_prior': (0.1, 5.0),
-        'match_threshold': (0.5, 4.0),
-        'epsilon': (0.01, 0.5),
+        "sigma_prior": (0.1, 5.0),
+        "match_threshold": (0.5, 4.0),
+        "epsilon": (0.01, 0.5),
     }
 
-    param_names = ['sigma_prior', 'match_threshold', 'epsilon']
+    param_names = ["sigma_prior", "match_threshold", "epsilon"]
     param_bounds = [bounds[p] for p in param_names]
 
     # Initialize with reasonable values
     x0 = np.array([1.5, 2.0, 0.1])
 
     n_evals = [0]
+
     def objective(x):
         n_evals[0] += 1
         sp, mt, eps = x
         total_error = 0.0
         for k in k_values:
             model = CommonalityModel(
-                k=k, lambda_mix=lambda_mix,
+                k=k,
+                lambda_mix=lambda_mix,
                 sigma_obs=0.0,  # Delta function for no-chat (exact observations)
-                sigma_prior=sp, match_threshold=mt, epsilon=eps
+                sigma_prior=sp,
+                match_threshold=mt,
+                epsilon=eps,
             )
             pred_df = fast_evaluate(model, eval_data)
             total_error += compute_gradient_error(pred_df, human_rates)
@@ -576,15 +651,15 @@ def fit_parameters(
     result = minimize(
         objective,
         x0,
-        method='L-BFGS-B',
+        method="L-BFGS-B",
         bounds=param_bounds,
-        options={'ftol': 1e-8, 'gtol': 1e-6, 'maxiter': 200}
+        options={"ftol": 1e-8, "gtol": 1e-6, "maxiter": 200},
     )
 
     if verbose:
         print(f"  Converged: {result.success} after {n_evals[0]} evaluations")
 
-    best_params = {'sigma_obs': 0.0}  # Delta function (exact observations in no-chat)
+    best_params = {"sigma_obs": 0.0}  # Delta function (exact observations in no-chat)
     best_params.update({p: float(result.x[i]) for i, p in enumerate(param_names)})
 
     # Compute per-k metrics
@@ -592,24 +667,28 @@ def fit_parameters(
     for k in k_values:
         model = CommonalityModel(k=k, lambda_mix=lambda_mix, **best_params)
         pred_df = fast_evaluate(model, eval_data)
-        probs = np.clip(pred_df["pred_prob"].values, 1e-10, 1-1e-10)
+        probs = np.clip(pred_df["pred_prob"].values, 1e-10, 1 - 1e-10)
         actual = pred_df["actual"].values
 
         metrics_by_k[k] = {
-            'gradient_error': compute_gradient_error(pred_df, human_rates),
-            'log_likelihood': float(np.sum(actual * np.log(probs) + (1 - actual) * np.log(1 - probs))),
-            'accuracy': float(np.mean((probs > 0.5) == actual)),
+            "gradient_error": compute_gradient_error(pred_df, human_rates),
+            "log_likelihood": float(
+                np.sum(actual * np.log(probs) + (1 - actual) * np.log(1 - probs))
+            ),
+            "accuracy": float(np.mean((probs > 0.5) == actual)),
         }
 
     if verbose:
-        print(f"  Final: σ_prior={best_params['sigma_prior']:.4f}, "
-              f"τ={best_params['match_threshold']:.4f}, ε={best_params['epsilon']:.4f}")
+        print(
+            f"  Final: σ_prior={best_params['sigma_prior']:.4f}, "
+            f"τ={best_params['match_threshold']:.4f}, ε={best_params['epsilon']:.4f}"
+        )
         print(f"  Mean gradient error: {result.fun:.6f}")
 
     return best_params, {
-        'mean_gradient_error': float(result.fun),
-        'by_k': metrics_by_k,
-        'optimizer_success': result.success,
+        "mean_gradient_error": float(result.fun),
+        "by_k": metrics_by_k,
+        "optimizer_success": result.success,
     }
 
 
@@ -626,18 +705,11 @@ def fast_evaluate(model: CommonalityModel, eval_data: dict) -> pd.DataFrame:
     """
     # Batch predict all participants at once
     all_preds = model.predict_batch(
-        eval_data["obs_qs"],
-        eval_data["r_partners"],
-        eval_data["r_selves"]
+        eval_data["obs_qs"], eval_data["r_partners"], eval_data["r_selves"]
     )
 
     # Map predictions back using numpy indexing (fast)
     info = eval_data["info"].copy()
-    info["pred_prob"] = all_preds[
-        info["pid_idx"].values,
-        info["question"].values
-    ]
+    info["pred_prob"] = all_preds[info["pid_idx"].values, info["question"].values]
 
     return info
-
-

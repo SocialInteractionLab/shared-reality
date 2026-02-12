@@ -45,15 +45,21 @@ def get_dyad_info(chat: pd.DataFrame, group_id: str) -> list[dict]:
         if len(focal) == 0:
             continue
         focal = focal.iloc[0]
-        participants.append({
-            "pid": pid,
-            "focal_question": focal["matchedQuestion"],
-            "focal_domain": focal["matchedDomain"],
-            "self_response": int(focal["preChatResponse"]),
-            "perceived_partner": int(focal["postChatResponse"]) if pd.notna(focal["postChatResponse"]) else None,
-            "commonality_judgment": int(focal["participant_binary_prediction"]),
-            "stance": focal["stance"],
-        })
+        participants.append(
+            {
+                "pid": pid,
+                "focal_question": focal["matchedQuestion"],
+                "focal_domain": focal["matchedDomain"],
+                "self_response": int(focal["preChatResponse"]),
+                "perceived_partner": (
+                    int(focal["postChatResponse"])
+                    if pd.notna(focal["postChatResponse"])
+                    else None
+                ),
+                "commonality_judgment": int(focal["participant_binary_prediction"]),
+                "stance": focal["stance"],
+            }
+        )
     return participants
 
 
@@ -90,7 +96,9 @@ def get_filtered_groups(
 
 
 class ChatViewer:
-    def __init__(self, root: tk.Tk, msgs: pd.DataFrame, chat: pd.DataFrame, groups: list[str]):
+    def __init__(
+        self, root: tk.Tk, msgs: pd.DataFrame, chat: pd.DataFrame, groups: list[str]
+    ):
         self.root = root
         self.msgs = msgs
         self.chat = chat
@@ -104,7 +112,9 @@ class ChatViewer:
         # Dark theme style
         style = ttk.Style()
         style.theme_use("clam")
-        style.configure(".", background="#1a1a1a", foreground="white", fieldbackground="#1a1a1a")
+        style.configure(
+            ".", background="#1a1a1a", foreground="white", fieldbackground="#1a1a1a"
+        )
         style.configure("TFrame", background="#1a1a1a")
         style.configure("TLabel", background="#1a1a1a", foreground="white")
         style.configure("TLabelframe", background="#1a1a1a", foreground="white")
@@ -129,14 +139,18 @@ class ChatViewer:
         self.next_btn.pack(side="left")
 
         # Group ID label
-        self.group_label = ttk.Label(nav, text="", font=("Helvetica Neue", 10, "italic"))
+        self.group_label = ttk.Label(
+            nav, text="", font=("Helvetica Neue", 10, "italic")
+        )
         self.group_label.pack(side="right")
 
         # Info panel (focal question + participant info)
         info_frame = ttk.LabelFrame(self.root, text="Dyad Info", padding=10)
         info_frame.pack(fill="x", padx=10, pady=5)
 
-        self.focal_label = ttk.Label(info_frame, text="", font=("Helvetica Neue", 11, "bold"), wraplength=750)
+        self.focal_label = ttk.Label(
+            info_frame, text="", font=("Helvetica Neue", 11, "bold"), wraplength=750
+        )
         self.focal_label.pack(anchor="w")
 
         self.domain_label = ttk.Label(info_frame, text="", font=("Helvetica Neue", 10))
@@ -150,16 +164,29 @@ class ChatViewer:
         chat_frame.pack(fill="both", expand=True, padx=10, pady=5)
 
         self.chat_text = tk.Text(
-            chat_frame, wrap="word", font=("Helvetica Neue", 12),
-            bg="#1a1a1a", fg="white", relief="flat", padx=10, pady=10,
-            spacing3=4, insertbackground="white"
+            chat_frame,
+            wrap="word",
+            font=("Helvetica Neue", 12),
+            bg="#1a1a1a",
+            fg="white",
+            relief="flat",
+            padx=10,
+            pady=10,
+            spacing3=4,
+            insertbackground="white",
         )
         self.chat_text.pack(fill="both", expand=True)
 
         # Configure tags for styling
-        self.chat_text.tag_configure("cat", foreground="#FF6B9D", font=("Helvetica Neue", 12, "bold"))
-        self.chat_text.tag_configure("dog", foreground="#7EB3FF", font=("Helvetica Neue", 12, "bold"))
-        self.chat_text.tag_configure("msg", foreground="white", font=("Helvetica Neue", 12))
+        self.chat_text.tag_configure(
+            "cat", foreground="#FF6B9D", font=("Helvetica Neue", 12, "bold")
+        )
+        self.chat_text.tag_configure(
+            "dog", foreground="#7EB3FF", font=("Helvetica Neue", 12, "bold")
+        )
+        self.chat_text.tag_configure(
+            "msg", foreground="white", font=("Helvetica Neue", 12)
+        )
 
         scrollbar = ttk.Scrollbar(chat_frame, command=self.chat_text.yview)
         scrollbar.pack(side="right", fill="y")
@@ -183,10 +210,14 @@ class ChatViewer:
         # Focal question (same for both participants in a dyad)
         if info:
             self.focal_label.config(text=f"Focal: {info[0]['focal_question']}")
-            self.domain_label.config(text=f"Domain: {info[0]['focal_domain']}  |  Stance: {info[0]['stance']}")
+            self.domain_label.config(
+                text=f"Domain: {info[0]['focal_domain']}  |  Stance: {info[0]['stance']}"
+            )
 
         # Build author → pid map from messages
-        group_msgs = self.msgs[self.msgs["group_id"] == gid].sort_values("absolute_timestamp")
+        group_msgs = self.msgs[self.msgs["group_id"] == gid].sort_values(
+            "absolute_timestamp"
+        )
         author_pid = group_msgs.groupby("author")["prolific_id"].first().to_dict()
 
         # Clear and rebuild participant info cards
@@ -204,24 +235,46 @@ class ChatViewer:
             emoji_color = "#FF6B9D" if emoji == "\U0001f431" else "#7EB3FF"
 
             header = tk.Label(
-                card, text=f"{emoji} {p['pid'][:8]}...",
-                font=("Helvetica Neue", 10, "bold"), fg=emoji_color, bg="#1a1a1a"
+                card,
+                text=f"{emoji} {p['pid'][:8]}...",
+                font=("Helvetica Neue", 10, "bold"),
+                fg=emoji_color,
+                bg="#1a1a1a",
             )
             header.pack(anchor="w")
 
             self_resp = LIKERT_LABELS.get(p["self_response"], str(p["self_response"]))
-            perceived = LIKERT_LABELS.get(p["perceived_partner"], "N/A") if p["perceived_partner"] else "N/A"
+            perceived = (
+                LIKERT_LABELS.get(p["perceived_partner"], "N/A")
+                if p["perceived_partner"]
+                else "N/A"
+            )
             commonality = "Yes" if p["commonality_judgment"] == 1 else "No"
-            commonality_color = "#2ecc71" if p["commonality_judgment"] == 1 else "#e74c3c"
+            commonality_color = (
+                "#2ecc71" if p["commonality_judgment"] == 1 else "#e74c3c"
+            )
 
-            tk.Label(card, text=f"Self: {self_resp} ({p['self_response']})",
-                     font=("Helvetica Neue", 9), fg="white", bg="#1a1a1a").pack(anchor="w")
-            tk.Label(card, text=f"Perceived partner: {perceived} ({p['perceived_partner']})",
-                     font=("Helvetica Neue", 9), fg="white", bg="#1a1a1a").pack(anchor="w")
+            tk.Label(
+                card,
+                text=f"Self: {self_resp} ({p['self_response']})",
+                font=("Helvetica Neue", 9),
+                fg="white",
+                bg="#1a1a1a",
+            ).pack(anchor="w")
+            tk.Label(
+                card,
+                text=f"Perceived partner: {perceived} ({p['perceived_partner']})",
+                font=("Helvetica Neue", 9),
+                fg="white",
+                bg="#1a1a1a",
+            ).pack(anchor="w")
 
             commonality_lbl = tk.Label(
-                card, text=f"Expected commonality: {commonality}",
-                font=("Helvetica Neue", 9, "bold"), fg=commonality_color, bg="#1a1a1a"
+                card,
+                text=f"Expected commonality: {commonality}",
+                font=("Helvetica Neue", 9, "bold"),
+                fg=commonality_color,
+                bg="#1a1a1a",
             )
             commonality_lbl.pack(anchor="w")
 
@@ -239,7 +292,9 @@ class ChatViewer:
 
         # Update button states
         self.prev_btn.config(state="normal" if self.current_idx > 0 else "disabled")
-        self.next_btn.config(state="normal" if self.current_idx < len(self.groups) - 1 else "disabled")
+        self.next_btn.config(
+            state="normal" if self.current_idx < len(self.groups) - 1 else "disabled"
+        )
 
     def _prev(self):
         if self.current_idx > 0:
@@ -259,7 +314,7 @@ def main():
         choices=["all", "opposing", "opposing-commonality"],
         default="opposing-commonality",
         help="Filter dyads: 'opposing-commonality' (default) shows opposing-stance dyads "
-             "where at least one participant expected focal commonality",
+        "where at least one participant expected focal commonality",
     )
     args = parser.parse_args()
 
