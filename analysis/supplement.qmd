@@ -205,13 +205,13 @@ confint(model, method = "Wald")
 
 ## Factor Structure of Belief Space {#sec-factor}
 
-We computed factor loadings via eigendecomposition of the 35-question belief correlation matrix. @fig-factor-structure panel A shows the scree plot comparing observed eigenvalues against the 95th percentile from parallel analysis (eigenvalues computed from random data with the same dimensions). The first five components exceeded the parallel analysis threshold, suggesting $k = 5$ factors. These five factors explained 36% of total variance.
+We computed factor loadings via eigendecomposition of the 35-question belief correlation matrix. @fig-factor-structure panel A shows the scree plot comparing observed eigenvalues against the 95th percentile from parallel analysis (eigenvalues computed from random data with the same dimensions). The first five components exceeded the parallel analysis threshold, suggesting $k = 5$ factors. These five factors explained 34% of total variance.
 
-@fig-factor-structure panel B displays the absolute loadings for the first five factors, organized by experimenter-assigned domain. Religion questions loaded most coherently on a single factor (PC1), while politics questions showed more distributed loadings across multiple factors. Lifestyle and background questions showed the most diffuse loadings. This variation in factor structure predicts domain-specific generalization patterns: domains with more coherent loadings should support stronger within-domain transfer.
+@fig-factor-structure panel B displays the factor loadings for the first five principal components, with questions (rows) grouped by experimenter-assigned domain. Red indicates positive loadings and blue indicates negative loadings (clipped to ±0.6). Religion questions loaded most coherently on a single factor (F1), while politics questions showed more distributed loadings across multiple factors. Lifestyle and background questions showed the most diffuse loadings. This variation in factor structure predicts domain-specific generalization patterns: domains with more coherent loadings should support stronger within-domain transfer.
 
 ```{python}
 #| label: fig-factor-structure
-#| fig-cap: "Factor structure of belief space. (A) Scree plot comparing observed eigenvalues (solid) against the 95th percentile from parallel analysis (dashed). The first five components exceed the threshold. (B) Absolute factor loadings for the first five principal components, grouped by domain. Religion questions load most coherently on a single factor, while politics and other domains show more distributed loadings."
+#| fig-cap: "Factor structure of belief space. (A) Scree plot comparing observed eigenvalues (solid) against the 95th percentile from parallel analysis (dashed). The first five components exceed the threshold; shaded area highlights variance captured by the retained factors. (B) Factor loadings for the first five principal components, grouped by domain. Red indicates positive loadings, blue indicates negative loadings (clipped to ±0.6)."
 #| fig-width: 12
 #| fig-height: 5
 
@@ -243,7 +243,7 @@ loadings_k5[:, 2] *= -1  # Flip factor 3 sign for interpretability
 var_explained_k5 = np.sum(eigenvalues[:5]) / np.sum(eigenvalues) * 100
 
 # Reorder domains for interpretability
-domain_order = ['Religion', 'Politics', 'Background', 'Morality', 'Lifestyle', 'Identity', 'Preferences']
+domain_order = ['Politics', 'Preferences', 'Background', 'Morality', 'Lifestyle', 'Religion', 'Identity']
 original_ranges = {
     'Lifestyle': (0, 5), 'Background': (5, 10), 'Identity': (10, 15),
     'Morality': (15, 20), 'Politics': (20, 25), 'Preferences': (25, 30), 'Religion': (30, 35)
@@ -280,21 +280,23 @@ for i in range(n_parallel):
 parallel_95 = np.percentile(parallel_eigs, 95, axis=0)
 
 # Create figure
+plt.rcParams.update({'font.family': 'Helvetica Neue', 'font.size': 11})
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5), gridspec_kw={'width_ratios': [1, 1.5]})
 
 # Panel A: Scree plot
-ax1.plot(range(1, 36), eigenvalues, 'o-', color='#2166ac', linewidth=2, markersize=6, label='Observed')
-ax1.plot(range(1, 36), parallel_95, 's--', color='#b2182b', linewidth=1.5, markersize=4, label='95th percentile\n(parallel analysis)')
-ax1.axvline(5.5, color='gray', linestyle=':', alpha=0.6)
+ax1.plot(range(1, 36), eigenvalues, 'o-', color='#333333', linewidth=2, markersize=6, label='Observed')
+ax1.plot(range(1, 36), parallel_95, 's--', color='#999999', linewidth=1.5, markersize=4, label='95th percentile\n(parallel analysis)')
+ax1.fill_between(range(1, 6), eigenvalues[:5], alpha=0.2, color='#6baed6')
+ax1.axvline(5, color='#d62728', linestyle=':', linewidth=1.5)
 ax1.set_xlabel('Component', fontsize=12)
 ax1.set_ylabel('Eigenvalue', fontsize=12)
 ax1.set_xlim(0, 20)
 ax1.legend(frameon=False, fontsize=10)
 ax1.text(-0.15, 1.05, 'A', transform=ax1.transAxes, fontsize=16, fontweight='bold')
-ax1.text(6, eigenvalues[4] + 0.3, 'k=5', fontsize=11, color='gray')
+ax1.text(5.3, eigenvalues[4] + 0.3, f'k=5 ({var_explained_k5:.0f}% var.)', fontsize=11, color='#d62728')
 
-# Panel B: Heatmap
-im = ax2.imshow(np.abs(loadings_reord), cmap='Reds', aspect='auto', vmin=0, vmax=0.8)
+# Panel B: Heatmap (signed loadings, coolwarm)
+im = ax2.imshow(np.clip(loadings_reord, -0.6, 0.6), cmap='coolwarm', aspect='auto', vmin=-0.6, vmax=0.6)
 
 # Domain boundaries
 domain_boundaries = []
@@ -305,14 +307,14 @@ for domain in domain_order:
     cumsum += end - start
 
 for i, (domain, ypos) in enumerate(zip(domain_order, domain_boundaries)):
-    ax2.text(-0.5, ypos, domain, ha='right', va='center', fontsize=10, fontweight='bold')
+    ax2.text(-0.8, ypos, domain, ha='right', va='center', fontsize=11, fontweight='bold')
 
 # Add horizontal lines between domains
 cumsum = 0
 for domain in domain_order[:-1]:
     start, end = original_ranges[domain]
     cumsum += end - start
-    ax2.axhline(cumsum - 0.5, color='white', linewidth=2)
+    ax2.axhline(cumsum - 0.5, color='black', linewidth=2)
 
 ax2.set_xticks(range(5))
 ax2.set_xticklabels([f'F{i+1}' for i in range(5)], fontsize=11)
@@ -320,7 +322,7 @@ ax2.set_yticks([])
 ax2.set_xlabel('Factor', fontsize=12)
 ax2.text(-0.05, 1.05, 'B', transform=ax2.transAxes, fontsize=16, fontweight='bold')
 
-cbar = plt.colorbar(im, ax=ax2, shrink=0.6, label='|Loading|')
+cbar = plt.colorbar(im, ax=ax2, shrink=0.6, label='Loading')
 
 plt.tight_layout()
 plt.savefig(figures_dir / 'figure_s2.pdf', dpi=300, bbox_inches='tight')
@@ -660,11 +662,11 @@ Furthermore, individual self-structure gradient did not correlate with behaviora
 
 ## Scrambled Loadings Control {#sec-scrambled}
 
-To verify that model performance depends on veridical belief structure, we compared the actual factor loadings against scrambled loadings (rows of $\Lambda$ randomly permuted). Scrambling destroys the question-to-factor mapping while preserving marginal distributions. Across 100 random permutations, the gradient collapsed to near-zero (@fig-scrambled). This confirms that the Bayesian model captures real structure in belief covariance---the specific question-to-factor mapping is meaningful, not arbitrary.
+To verify that model performance depends on veridical belief structure, we compared the actual factor loadings against scrambled loadings (rows of $\Lambda$ randomly permuted). Scrambling destroys the question-to-factor mapping while preserving marginal distributions. Across 1,000 random permutations, the gradient collapsed to near-zero (@fig-scrambled). This confirms that the Bayesian model captures real structure in belief covariance---the specific question-to-factor mapping is meaningful, not arbitrary.
 
 ```{python}
 #| label: fig-scrambled
-#| fig-cap: "Scrambled loadings control. Distribution of gradients across 100 random permutations of the loading matrix (gray histogram) compared to the actual loadings (green line) and human gradient (black dashed line). Scrambling eliminates structured transfer."
+#| fig-cap: "Scrambled loadings control. Distribution of gradients across 1,000 random permutations of the loading matrix (gray histogram) compared to the actual loadings (green line) and human gradient (black dashed line). Scrambling eliminates structured transfer."
 #| fig-width: 6
 #| fig-height: 4
 
@@ -682,7 +684,7 @@ actual_gradient = (
 real_loadings = load_factor_loadings(k=5)
 np.random.seed(42)
 shuffled_grads = []
-for seed in range(100):
+for seed in range(1000):
     np.random.seed(seed)
     perm = np.random.permutation(35)
     params = {k: v for k, v in UNIFIED_PARAMS.items() if k != 'lambda_mix'}
@@ -1113,8 +1115,8 @@ domain_norms = questions.groupby('domain')[norm_cols].mean()
 domain_norms.index = domain_norms.index.str.replace('arbitrary', 'Lifestyle').str.capitalize()
 domain_norms.columns = ['Personal', 'Relevant', 'Divisive', 'Deep', 'Learn', 'Interest', 'Likely', 'Agreement']
 
-# Sort by Personal (most theoretically relevant)
-domain_norms = domain_norms.sort_values('Personal', ascending=False)
+# Fixed domain order
+domain_norms = domain_norms.reindex(['Politics', 'Preferences', 'Background', 'Morality', 'Lifestyle', 'Religion', 'Identity'])
 
 # Create heatmap
 fig, ax = plt.subplots(figsize=(7, 5))
@@ -1124,7 +1126,7 @@ im = ax.imshow(domain_norms.values, cmap='YlOrRd', aspect='auto', vmin=15, vmax=
 
 # Labels
 ax.set_xticks(range(len(domain_norms.columns)))
-ax.set_xticklabels(domain_norms.columns, fontsize=11)
+ax.set_xticklabels(domain_norms.columns, fontsize=11, rotation=45, ha='right')
 ax.set_yticks(range(len(domain_norms.index)))
 ax.set_yticklabels(domain_norms.index, fontsize=11)
 
@@ -1408,6 +1410,7 @@ fit_model <- function(data, cat) {
 results <- domain_df %>%
     mutate(matchedDomain = gsub('arbitrary', 'Lifestyle', matchedDomain)) %>%
     mutate(matchedDomain = tools::toTitleCase(matchedDomain)) %>%
+    mutate(matchedDomain = factor(matchedDomain, levels = c('Politics', 'Preferences', 'Background', 'Morality', 'Lifestyle', 'Religion', 'Identity'))) %>%
     group_by(matchedDomain, category, stance) %>%
     nest() %>%
     mutate(res = map2(data, category, fit_model)) %>%
@@ -1430,6 +1433,7 @@ results_wide <- results %>%
     mutate(beta_sig = sprintf('%.2f%s', beta, sig)) %>%
     select(matchedDomain, category, stance, beta_sig) %>%
     pivot_wider(names_from = c(stance, category), values_from = beta_sig) %>%
+    arrange(matchedDomain) %>%
     select(matchedDomain,
            opposing_sameQ, opposing_sameD, opposing_diffD,
            shared_sameQ, shared_sameD, shared_diffD)
