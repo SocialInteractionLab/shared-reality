@@ -287,8 +287,12 @@ def parse_raw_results(raw_file: Path) -> list:
     return results
 
 
-def compute_pshared_metrics(results: list) -> pd.DataFrame:
+def compute_pshared_metrics(results: list, tau: int = 2) -> pd.DataFrame:
     """Compute P(shared) metrics from parsed results.
+
+    Args:
+        results: Parsed batch results
+        tau: Agreement threshold for ground truth (responses within tau count as shared)
 
     Returns:
         DataFrame with predicted vs actual agreement by group/time/question
@@ -380,7 +384,7 @@ def compute_pshared_metrics(results: list) -> pd.DataFrame:
 
             cat_resp = responses[cat_pid][q_num]
             dog_resp = responses[dog_pid][q_num]
-            actual_agreement = abs(cat_resp - dog_resp) <= 2  # τ=2.0 from fitted_params
+            actual_agreement = abs(cat_resp - dog_resp) <= tau
 
             q_domain = questions.iloc[q_idx]['domain'] if q_idx < len(questions) else None
 
@@ -454,7 +458,7 @@ def cmd_download(args):
     results = parse_raw_results(raw_file)
 
     if args.type == "pshared":
-        df = compute_pshared_metrics(results)
+        df = compute_pshared_metrics(results, tau=args.tau)
         suffix = f"_{args.version}" if args.version else ""
         output_file = RESULTS_DIR / f"pshared_timecourse{suffix}.csv"
     else:
@@ -490,6 +494,7 @@ def main():
     sub = subparsers.add_parser('download', help='Download and parse results')
     sub.add_argument('type', choices=['pshared', 'chat'], help='Experiment type')
     sub.add_argument('--version', default='', help='Version suffix for output file (e.g., "tau1")')
+    sub.add_argument('--tau', type=int, default=2, help='Agreement threshold for ground truth (default: 2)')
 
     args = parser.parse_args()
 
