@@ -7,7 +7,7 @@ reproducible path from raw Firebase exports to the final responses.csv.
 
 RAW DATA SOURCES
 ================
-From shared-reality-dev repo (exported from Firebase via pull_data_from_firebase.ipynb):
+From shared-reality-dev repo (exported from Firebase via `pull_data_from_firebase.ipynb` in the `shared-reality-dev` repo):
 
 Chat conditions:
   - chat/high-match-pre-post-responses.csv
@@ -25,7 +25,7 @@ SR-G scores:
 
 MANUAL DATA FIXES
 =================
-The following fix was applied in pull_data_from_firebase.ipynb and is reflected
+The following fix was applied in `pull_data_from_firebase.ipynb` in the `shared-reality-dev` repo and is reflected
 in the individual chat files (but NOT in the partner-joined files):
 
   Participant 65a3c0ee60b1e46f4e1d5f75:
@@ -48,7 +48,7 @@ DUPLICATE PARTICIPANT HANDLING
          6438a923683de8fa6662b555, 65603afb8e9cfc182d7b55bc
 
 2. PARTICIPANTS IN MULTIPLE NO-CHAT CONDITIONS (5 total):
-   Rule: Keep first participation (determined by preprocess_for_simulations.ipynb in `shared-reality-dev` repo)
+   Rule: Keep first participation (determined by/documented in `preprocess_for_simulations.ipynb` in `shared-reality-dev` repo)
 
    5c395df5f5ebd50001850900: in low & high -> keep HIGH (remove low)
    6742d74e9f7b3b029a3791a6: in low & high -> keep HIGH (remove low)
@@ -128,11 +128,13 @@ def load_nochat_data():
 
     # Extract participant's perceived focal response (their postChatResponse on the focal question)
     # This is what the participant recalled/perceived about their partner's response
+    # NOTE: Must include matchType in merge key because 5 participants appear in
+    # multiple no-chat conditions — merging on pid alone creates duplicate rows.
     focal_rows = nochat_df[nochat_df["question"] == nochat_df["matchedIdx"]][
-        ["pid", "postChatResponse"]
+        ["pid", "matchType", "postChatResponse"]
     ].copy()
-    focal_rows.columns = ["pid", "perceivedFocalResponse"]
-    nochat_df = nochat_df.merge(focal_rows, on="pid", how="left")
+    focal_rows.columns = ["pid", "matchType", "perceivedFocalResponse"]
+    nochat_df = nochat_df.merge(focal_rows, on=["pid", "matchType"], how="left")
 
     return nochat_df
 
