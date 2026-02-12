@@ -45,3 +45,4 @@ analysis/model_analyses.quarto_ipynb
 analysis/supplement.tex
 analysis/supplement.rmarkdown
 .env
+data/llm_results/pshared_timecourse_tau1.csv
