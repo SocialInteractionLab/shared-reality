@@ -217,7 +217,7 @@ Return JSON with this structure (using question indices 0-{len(questions_df)-1})
 }}"""
 
 
-def create_pshared_prompt(conversation: str, questions_df: pd.DataFrame, chat_topic: str) -> str:
+def create_pshared_prompt(conversation: str, questions_df: pd.DataFrame, chat_topic: str, tau: int = 2) -> str:
     """Create prompt for directly predicting P(shared) - probability of agreement.
 
     Instead of predicting full probability distributions, this prompt asks the LLM
@@ -228,6 +228,7 @@ def create_pshared_prompt(conversation: str, questions_df: pd.DataFrame, chat_to
         conversation: Interleaved conversation text with speaker labels (Cat/Dog)
         questions_df: DataFrame with columns [questionText, domain]
         chat_topic: The question they discussed (marked [DISCUSSED] in output)
+        tau: Agreement threshold (responses within tau points count as "shared")
 
     Returns:
         Formatted prompt string
@@ -249,7 +250,7 @@ def create_pshared_prompt(conversation: str, questions_df: pd.DataFrame, chat_to
 
     return f"""You are predicting whether two people (Cat and Dog) would AGREE on various survey questions.
 
-Two people "share" a response if their Likert answers are within 2 points of each other (e.g., one says 3 and the other says 4 or 5).
+Two people "share" a response if their Likert answers are within {tau} point{"s" if tau != 1 else ""} of each other (e.g., one says 3 and the other says {3 + tau}).
 
 Based on their conversation, predict the probability that Cat and Dog would agree on each question.
 

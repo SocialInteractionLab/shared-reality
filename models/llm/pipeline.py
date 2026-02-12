@@ -70,7 +70,8 @@ def build_conversation(messages_df: pd.DataFrame, up_to_time: pd.Timestamp) -> s
 def create_chat_timecourse_batch(prompt_type: str = "pshared",
                                   bin_seconds: int = 15,
                                   max_bins: int = 13,
-                                  sample_groups: list = None) -> list:
+                                  sample_groups: list = None,
+                                  tau: int = 2) -> list:
     """Create batch requests for chat timecourse analysis.
 
     Args:
@@ -78,6 +79,7 @@ def create_chat_timecourse_batch(prompt_type: str = "pshared",
         bin_seconds: Size of each time bin in seconds
         max_bins: Maximum number of time bins (13 = ~3 min conversation)
         sample_groups: Optional list of group_ids to process
+        tau: Agreement threshold for pshared prompts
 
     Returns:
         List of batch request dicts
@@ -105,7 +107,10 @@ def create_chat_timecourse_batch(prompt_type: str = "pshared",
         for t in range(max_bins):
             bin_end = start_time + pd.Timedelta(seconds=(t + 1) * bin_seconds)
             conversation = build_conversation(group_messages, bin_end)
-            prompt = prompt_fn(conversation=conversation, questions_df=questions, chat_topic=chat_topic)
+            if prompt_type == "pshared":
+                prompt = prompt_fn(conversation=conversation, questions_df=questions, chat_topic=chat_topic, tau=tau)
+            else:
+                prompt = prompt_fn(conversation=conversation, questions_df=questions, chat_topic=chat_topic)
             custom_id = f"{prompt_type}_{group_id}_t{t}"
             batch_requests.append(create_batch_request(custom_id, prompt))
 
@@ -417,7 +422,8 @@ def cmd_submit(args):
     batch_requests = create_chat_timecourse_batch(
         prompt_type=args.type,
         max_bins=args.max_bins,
-        sample_groups=sample_groups
+        sample_groups=sample_groups,
+        tau=args.tau
     )
     print(f"Created {len(batch_requests)} batch requests")
 
@@ -449,7 +455,8 @@ def cmd_download(args):
 
     if args.type == "pshared":
         df = compute_pshared_metrics(results)
-        output_file = RESULTS_DIR / "pshared_timecourse.csv"
+        suffix = f"_{args.version}" if args.version else ""
+        output_file = RESULTS_DIR / f"pshared_timecourse{suffix}.csv"
     else:
         raise NotImplementedError("Use 'pshared' type. Chat parsing not implemented in unified pipeline.")
 
@@ -473,6 +480,7 @@ def main():
     sub.add_argument('--sample', type=int, help='Only process first N groups')
     sub.add_argument('--version', default='v1', help='Output version suffix')
     sub.add_argument('--dry-run', action='store_true', help='Create batch file only')
+    sub.add_argument('--tau', type=int, default=2, help='Agreement threshold (default: 2)')
 
     # Status
     sub = subparsers.add_parser('status', help='Check job status')
@@ -481,6 +489,7 @@ def main():
     # Download
     sub = subparsers.add_parser('download', help='Download and parse results')
     sub.add_argument('type', choices=['pshared', 'chat'], help='Experiment type')
+    sub.add_argument('--version', default='', help='Version suffix for output file (e.g., "tau1")')
 
     args = parser.parse_args()
 
