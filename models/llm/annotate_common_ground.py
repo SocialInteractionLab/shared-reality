@@ -82,51 +82,68 @@ def create_annotation_prompt(
         focal_question: The question the dyad was matched on
         focal_domain: Domain of the focal question
         matched_tolerance: Absolute difference in their focal responses
-        stance: "opposing" or "shared"
+        stance: "opposing" or "shared" (NOT passed to the LLM — kept for metadata only)
     """
     return f"""You are analyzing a conversation between two people (Cat and Dog) who were paired
-for a study on social perception. They were asked to discuss a specific topic.
+for a study where they chat with a partner on a platform. They were asked to discuss a specific topic.
 
 === CONTEXT ===
 Focal question they discussed: "{focal_question}"
 Topic domain: {focal_domain}
-Their actual responses to this question differed by {matched_tolerance:.0f} point(s) on a 1-5 scale ({stance}).
+Before the conversation, each participant independently answered this question on a 1-5 scale.
+You do NOT know whether they agreed or disagreed — your job is to determine what happens
+in the conversation itself.
 
 === CONVERSATION ===
 {conversation}
 
 === ANNOTATION TASK ===
-Analyze this conversation and answer the following questions. Be specific and cite evidence from the conversation.
+Analyze this conversation in two phases. Be specific and cite evidence.
 
-1. DISAGREEMENT SURFACED: Did the participants explicitly or implicitly establish that they
-   have different views on the focal topic? (Not whether they *actually* disagree — we know they
-   do — but whether this difference became apparent during the conversation.)
+PHASE 1 — OPENING STANCE ESTABLISHMENT:
+Focus on the first part of the conversation where participants share their positions on
+the focal topic.
 
-2. COMMON GROUND FOUND: After any disagreement (or despite their different stances), did the
-   participants discover shared values, beliefs, experiences, or perspectives? This could be:
-   a) Same underlying values despite different surface answer (e.g., both care about the issue
-      even if they answer differently)
-   b) Common ground on a closely related subtopic within the same domain
-   c) Common ground on a different topic that came up naturally
-   d) Only general rapport/politeness (e.g., "nice talking to you") without substantive common ground
+1a. FOCAL STANCE REVEALED: Did both participants reveal their position on the focal topic?
+1b. INITIAL ALIGNMENT: Based on what they said, did they appear to agree or disagree on the
+    focal topic? (Only what's visible in the conversation — not your inference about what
+    they "really" think.)
 
-3. DISCOVERY MOMENT: If common ground was found, which message(s) mark the turning point where
-   it was discovered? Quote the key exchange.
+PHASE 2 — SUBSEQUENT CONVERSATION:
+After initial positions were established (or if they weren't), what happened next?
 
-4. SURPRISE/UNEXPECTEDNESS: Was the common ground discovery surprising given their initial
-   disagreement? (i.e., would an observer have predicted they'd find this commonality?)
+2a. ADDITIONAL COMMON GROUND: Beyond any initial agreement on the focal topic, did the
+    participants discover additional shared values, beliefs, experiences, or perspectives?
+    This could be:
+    a) Same underlying values despite different surface answers
+    b) Common ground on a closely related subtopic within the same domain
+    c) Common ground on a different topic that came up naturally
+    d) Only general rapport/politeness without substantive common ground
+    e) No additional common ground
+
+2b. ADDITIONAL DIFFERENCES: Beyond any initial disagreement or agreement on the focal topic, did the
+    participants discover additional differences, disagreements, or areas of agreement?
+
+2c. DISCOVERY MOMENT: If common ground was found after initial disagreement, which message(s)
+    mark the turning point? Quote the key exchange.
+
+2d. SURPRISE: Was any common ground discovery surprising? (i.e., would an observer have
+    predicted they'd find this commonality given what was said earlier in the conversation?)
 
 Return JSON with this exact structure:
 {{
-  "disagreement_surfaced": true/false,
-  "disagreement_evidence": "brief quote or description",
-  "common_ground_found": true/false,
+  "focal_stance_revealed": true/false,
+  "initial_alignment": "agreement" | "disagreement" | "unclear" | "not_discussed",
+  "initial_alignment_evidence": "brief quote showing how they established their stances",
+  "additional_common_ground": true/false,
   "common_ground_type": "same_values" | "related_subtopic" | "different_topic" | "rapport_only" | "none",
-  "common_ground_description": "what common ground was found",
-  "discovery_moment": "quote of key exchange",
+  "common_ground_description": "what common ground was found beyond initial stance",
+  "additional_differences": true/false,
+  "additional_differences_description": "what additional differences emerged",
+  "discovery_moment": "quote of key exchange where common ground was found",
   "surprising": true/false,
   "surprise_explanation": "why or why not surprising",
-  "conversation_arc": "disagreement_then_discovery" | "disagreement_no_resolution" | "no_disagreement_surfaced" | "immediate_agreement" | "other",
+  "conversation_arc": "agreement_then_expand" | "agreement_then_diverge" | "disagreement_then_common_ground" | "disagreement_no_resolution" | "no_stance_discussed" | "other",
   "notes": "any additional observations"
 }}"""
 
@@ -279,7 +296,7 @@ def download_and_parse() -> pd.DataFrame:
     if result.returncode != 0:
         raise FileNotFoundError("No predictions file found. Job may still be running.")
 
-    predictions_uri = result.stdout.strip().split("\n")[0]
+    predictions_uri = result.stdout.strip().split("\n")[-1]  # latest batch
     print(f"Downloading {predictions_uri}...")
 
     raw_file = RESULTS_DIR / f"{EXPERIMENT_NAME}_raw.jsonl"
@@ -347,10 +364,15 @@ def download_and_parse() -> pd.DataFrame:
     # Summary
     print(f"\n=== SUMMARY ===")
     print(f"Total dyads annotated: {len(df)}")
-    if "disagreement_surfaced" in df.columns:
-        print(f"Disagreement surfaced: {df['disagreement_surfaced'].sum()} ({df['disagreement_surfaced'].mean():.0%})")
-    if "common_ground_found" in df.columns:
-        print(f"Common ground found: {df['common_ground_found'].sum()} ({df['common_ground_found'].mean():.0%})")
+    if "initial_alignment" in df.columns:
+        print(f"\nInitial alignment (LLM-perceived):")
+        print(df["initial_alignment"].value_counts().to_string())
+        # Cross-tab with actual stance
+        if "stance" in df.columns:
+            print(f"\nInitial alignment × actual stance:")
+            print(pd.crosstab(df["stance"], df["initial_alignment"], margins=True))
+    if "additional_common_ground" in df.columns:
+        print(f"\nAdditional common ground: {df['additional_common_ground'].sum()} ({df['additional_common_ground'].mean():.0%})")
     if "common_ground_type" in df.columns:
         print(f"\nCommon ground types:")
         print(df["common_ground_type"].value_counts().to_string())
