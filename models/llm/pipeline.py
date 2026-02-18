@@ -9,9 +9,9 @@ This module provides a single entry point for:
 4. Downloading and parsing results
 
 Usage:
-    python -m models.llm.pipeline submit pshared --max-bins 13
-    python -m models.llm.pipeline status
-    python -m models.llm.pipeline download
+    uv run -m models.llm.pipeline submit pshared --max-bins 13
+    uv run -m models.llm.pipeline status
+    uv run -m models.llm.pipeline download
 """
 
 import argparse
@@ -20,23 +20,14 @@ import subprocess
 from pathlib import Path
 
 import pandas as pd
-import vertexai
-from vertexai.preview.batch_prediction import BatchPredictionJob
 
-from .config import DATA_DIR, BATCH_DIR, MODEL_CONFIG
+from .config import DATA_DIR, BATCH_DIR, RESULTS_DIR, MODEL_CONFIG, GCS_PROJECT, GCS_BUCKET
 from .data import load_questions, load_unified_data
 from .prompts import create_chat_prompt, create_pshared_prompt
 
 # Constants
-RESULTS_DIR = DATA_DIR / "llm_results"
-RESULTS_DIR.mkdir(exist_ok=True)
-
-GCS_PROJECT = "709275529646"
-GCS_BUCKET = "hs-social-interaction-llm-batches"
 GCS_PREFIX = "llm-stance-detection"
-
 STATE_NAMES = {1: "PENDING", 2: "RUNNING", 3: "SUCCEEDED", 4: "FAILED", 5: "CANCELLED"}
-
 
 # =============================================================================
 # Batch Request Creation
@@ -45,18 +36,21 @@ STATE_NAMES = {1: "PENDING", 2: "RUNNING", 3: "SUCCEEDED", 4: "FAILED", 5: "CANC
 
 def create_batch_request(custom_id: str, prompt: str) -> dict:
     """Create a single batch request in Gemini format."""
+    gen_config = {
+        "temperature": MODEL_CONFIG["temperature"],
+        "maxOutputTokens": MODEL_CONFIG["max_tokens"],
+        "responseMimeType": "application/json",
+    }
+    if "thinking_level" in MODEL_CONFIG:
+        gen_config["thinkingConfig"] = {
+            "thinkingLevel": MODEL_CONFIG["thinking_level"],
+        }
+
     return {
         "custom_id": custom_id,
         "request": {
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "temperature": MODEL_CONFIG["temperature"],
-                "maxOutputTokens": MODEL_CONFIG["max_tokens"],
-                "responseMimeType": "application/json",
-                "thinkingConfig": {
-                    "thinkingLevel": MODEL_CONFIG.get("thinking_level", "high")
-                },
-            },
+            "generationConfig": gen_config,
         },
     }
 
@@ -148,7 +142,7 @@ def get_batch_ids_file(experiment: str) -> Path:
 
 
 def submit_batch(batch_requests: list, experiment: str, version: str = "v1") -> str:
-    """Submit batch to Vertex AI.
+    """Submit batch to Vertex AI via REST API (supports global endpoint).
 
     Args:
         batch_requests: List of batch request dicts
@@ -158,7 +152,9 @@ def submit_batch(batch_requests: list, experiment: str, version: str = "v1") -> 
     Returns:
         Job resource name
     """
-    vertexai.init(project=GCS_PROJECT, location="global")
+    import google.auth
+    import google.auth.transport.requests
+    import requests
 
     # Save batch file locally
     batch_file = BATCH_DIR / f"{experiment}_timecourse.jsonl"
@@ -174,20 +170,48 @@ def submit_batch(batch_requests: list, experiment: str, version: str = "v1") -> 
     subprocess.run(["gsutil", "cp", str(batch_file), gcs_input], check=True)
     print(f"Uploaded to {gcs_input}")
 
-    # Submit job
-    job = BatchPredictionJob.submit(
-        source_model=f"publishers/google/models/{MODEL_CONFIG['model']}",
-        input_dataset=gcs_input,
-        output_uri_prefix=gcs_output,
-    )
+    # Submit via REST API (global endpoint)
+    credentials, _ = google.auth.default()
+    credentials.refresh(google.auth.transport.requests.Request())
 
-    print(f"Job: {job.resource_name}")
-    print(f"State: {STATE_NAMES.get(job.state, job.state)}")
+    url = (
+        f"https://aiplatform.googleapis.com/v1/"
+        f"projects/{GCS_PROJECT}/locations/global/"
+        f"batchPredictionJobs"
+    )
+    body = {
+        "displayName": f"{experiment}_timecourse_batch",
+        "model": f"publishers/google/models/{MODEL_CONFIG['model']}",
+        "inputConfig": {
+            "instancesFormat": "jsonl",
+            "gcsSource": {"uris": [gcs_input]},
+        },
+        "outputConfig": {
+            "predictionsFormat": "jsonl",
+            "gcsDestination": {"outputUriPrefix": gcs_output},
+        },
+    }
+
+    resp = requests.post(
+        url,
+        headers={
+            "Authorization": f"Bearer {credentials.token}",
+            "Content-Type": "application/json",
+        },
+        json=body,
+    )
+    resp.raise_for_status()
+    job = resp.json()
+
+    job_name = job["name"]
+    state = job.get("state", "UNKNOWN")
+    print(f"Job: {job_name}")
+    print(f"State: {state}")
 
     # Save job info
     job_info = {
         f"{experiment}_timecourse": {
-            "resource_name": job.resource_name,
+            "resource_name": job_name,
             "input_uri": gcs_input,
             "output_uri": gcs_output,
         }
@@ -195,11 +219,11 @@ def submit_batch(batch_requests: list, experiment: str, version: str = "v1") -> 
     with open(get_batch_ids_file(experiment), "w") as f:
         json.dump(job_info, f, indent=2)
 
-    return job.resource_name
+    return job_name
 
 
 def check_status(experiment: str) -> dict:
-    """Check batch job status.
+    """Check batch job status via REST API.
 
     Returns:
         Dict mapping job name to status string
@@ -208,15 +232,28 @@ def check_status(experiment: str) -> dict:
     if not batch_ids_file.exists():
         return {"error": "No batch job found"}
 
-    vertexai.init(project=GCS_PROJECT, location="global")
+    import google.auth
+    import google.auth.transport.requests
+    import requests
+
+    credentials, _ = google.auth.default()
+    credentials.refresh(google.auth.transport.requests.Request())
 
     with open(batch_ids_file) as f:
         batch_ids = json.load(f)
 
     results = {}
     for name, info in batch_ids.items():
-        job = BatchPredictionJob(info["resource_name"])
-        results[name] = STATE_NAMES.get(job.state, str(job.state))
+        resource_name = info["resource_name"]
+        url = f"https://aiplatform.googleapis.com/v1/{resource_name}"
+        resp = requests.get(
+            url,
+            headers={"Authorization": f"Bearer {credentials.token}"},
+        )
+        if resp.ok:
+            results[name] = resp.json().get("state", "UNKNOWN")
+        else:
+            results[name] = f"ERROR ({resp.status_code})"
 
     return results
 
@@ -250,7 +287,7 @@ def download_results(experiment: str) -> Path:
     if result.returncode != 0:
         raise FileNotFoundError("No predictions file found. Job may still be running.")
 
-    predictions_uri = result.stdout.strip().split("\n")[0]
+    predictions_uri = result.stdout.strip().split("\n")[-1]  # latest batch
     print(f"Downloading {predictions_uri}...")
 
     raw_file = RESULTS_DIR / f"{experiment}_raw.jsonl"
