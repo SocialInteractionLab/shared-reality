@@ -33,7 +33,7 @@ GCS_BUCKET = "hs-social-interaction-llm-batches"
 
 # Model configuration
 MODEL_CONFIG = {
-    "model": "gemini-3-pro-preview",
+    "model": "gemini-3.1-pro-preview",
     "temperature": 1.0,
     "max_tokens": 65536,
     "thinking_level": "high",

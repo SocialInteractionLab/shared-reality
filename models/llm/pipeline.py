@@ -21,7 +21,14 @@ from pathlib import Path
 
 import pandas as pd
 
-from .config import DATA_DIR, BATCH_DIR, RESULTS_DIR, MODEL_CONFIG, GCS_PROJECT, GCS_BUCKET
+from .config import (
+    DATA_DIR,
+    BATCH_DIR,
+    RESULTS_DIR,
+    MODEL_CONFIG,
+    GCS_PROJECT,
+    GCS_BUCKET,
+)
 from .data import load_questions, load_unified_data
 from .prompts import create_chat_prompt, create_pshared_prompt
 
