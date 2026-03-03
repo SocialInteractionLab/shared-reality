@@ -43,10 +43,15 @@ from .config import (
 
 GCS_PREFIX = "llm-annotate"
 EXPERIMENT_NAME = "common_ground"
-TC_EXPERIMENT_NAME = "common_ground_timecourse"
+TC_EXPERIMENT_BASE = "common_ground_timecourse"
+MAX_CONVERSATION_SECONDS = 195
 
-BIN_SECONDS = 15
-MAX_BINS = 13
+DEFAULT_BIN_SECONDS = 15
+
+
+def tc_experiment_name(bin_seconds: int) -> str:
+    """Experiment name with bin size suffix, e.g. common_ground_timecourse_15s."""
+    return f"{TC_EXPERIMENT_BASE}_{bin_seconds}s"
 
 
 def build_full_conversation(messages_df: pd.DataFrame, group_id: str) -> str:
@@ -352,16 +357,15 @@ def create_batch_requests(sample: Optional[int] = None) -> List[dict]:
 
 def create_timecourse_batch_requests(
     sample: Optional[int] = None,
-    bin_seconds: int = BIN_SECONDS,
-    max_bins: int = MAX_BINS,
+    bin_seconds: int = DEFAULT_BIN_SECONDS,
 ) -> List[dict]:
     """Create batch requests for common ground timecourse (all dyads × time bins).
 
     Args:
         sample: Only process first N groups
         bin_seconds: Size of each time bin in seconds
-        max_bins: Maximum number of time bins
     """
+    max_bins = MAX_CONVERSATION_SECONDS // bin_seconds
     messages = pd.read_csv(DATA_DIR / "messages.csv")
     messages["absolute_timestamp"] = pd.to_datetime(
         messages["absolute_timestamp"], format="mixed"
@@ -617,9 +621,10 @@ def download_and_parse() -> pd.DataFrame:
     return df
 
 
-def download_and_parse_timecourse() -> pd.DataFrame:
+def download_and_parse_timecourse(bin_seconds: int = DEFAULT_BIN_SECONDS) -> pd.DataFrame:
     """Download and parse timecourse results into a DataFrame."""
-    _, records = _download_raw(TC_EXPERIMENT_NAME)
+    experiment_name = tc_experiment_name(bin_seconds)
+    _, records = _download_raw(experiment_name)
 
     # Extract group_id and time_bin from custom_id (format: cgtc_{group_id}_t{bin})
     for rec in records:
@@ -628,7 +633,7 @@ def download_and_parse_timecourse() -> pd.DataFrame:
         parts = custom_id.rsplit("_t", 1)
         rec["group_id"] = parts[0].replace("cgtc_", "")
         rec["time_bin"] = int(parts[1])
-        rec["time_seconds"] = (rec["time_bin"] + 1) * BIN_SECONDS
+        rec["time_seconds"] = (rec["time_bin"] + 1) * bin_seconds
 
     df = pd.DataFrame(records)
 
@@ -640,7 +645,7 @@ def download_and_parse_timecourse() -> pd.DataFrame:
         how="left",
     )
 
-    output_file = RESULTS_DIR / f"{TC_EXPERIMENT_NAME}.csv"
+    output_file = RESULTS_DIR / f"{experiment_name}.csv"
     df.to_csv(output_file, index=False)
     print(f"Saved to {output_file}")
 
@@ -686,15 +691,23 @@ def main():
         "--download", action="store_true", help="Download and parse results"
     )
     parser.add_argument("--sample", type=int, help="Only process first N groups")
+    parser.add_argument(
+        "--bin-size", type=int, default=DEFAULT_BIN_SECONDS,
+        help=f"Time bin size in seconds for timecourse mode (default: {DEFAULT_BIN_SECONDS})",
+    )
     args = parser.parse_args()
 
     if args.mode == "timecourse":
+        bin_seconds = args.bin_size
+        experiment_name = tc_experiment_name(bin_seconds)
+
         if args.download:
-            download_and_parse_timecourse()
+            download_and_parse_timecourse(bin_seconds=bin_seconds)
             return
 
-        batch_requests = create_timecourse_batch_requests(sample=args.sample)
-        experiment_name = TC_EXPERIMENT_NAME
+        batch_requests = create_timecourse_batch_requests(
+            sample=args.sample, bin_seconds=bin_seconds,
+        )
     else:
         if args.download:
             download_and_parse()
