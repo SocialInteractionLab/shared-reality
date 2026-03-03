@@ -93,11 +93,37 @@ def get_dyad_info(chat: pd.DataFrame, group_id: str) -> list[dict]:
     return participants
 
 
+def load_llm_annotations() -> dict[str, dict]:
+    """Load LLM common ground annotations, returning {group_id: annotation_dict}.
+
+    Tries the full annotation first; falls back to timecourse (uses final bin).
+    Returns empty dict if no annotation files exist.
+    """
+    full_path = DATA_DIR / "llm_results" / "common_ground.csv"
+    if full_path.exists():
+        df = pd.read_csv(full_path)
+        return {row["group_id"]: row.to_dict() for _, row in df.iterrows()}
+
+    # Fall back to timecourse — use the latest time bin per dyad
+    for suffix in ["15s", "30s", ""]:
+        tc_name = f"common_ground_timecourse_{suffix}.csv" if suffix else "common_ground_timecourse.csv"
+        tc_path = DATA_DIR / "llm_results" / tc_name
+        if tc_path.exists():
+            df = pd.read_csv(tc_path)
+            latest = df.loc[df.groupby("group_id")["time_seconds"].idxmax()]
+            return {row["group_id"]: row.to_dict() for _, row in latest.iterrows()}
+
+    return {}
+
+
 def build_dyad_metadata(
     msgs: pd.DataFrame, chat: pd.DataFrame
 ) -> list[dict]:
     """Build metadata for all dyads: stance, prediction errors, commonality."""
     all_groups = sorted(set(msgs["group_id"]) & set(chat["groupId"]))
+
+    # Load LLM annotations if available
+    llm = load_llm_annotations()
 
     dyads = []
     for gid in all_groups:
@@ -108,6 +134,13 @@ def build_dyad_metadata(
         errors = [p["prediction_error"] for p in info if p["prediction_error"] is not None]
         distances = [p["perceived_distance"] for p in info if p["perceived_distance"] is not None]
         commonality_count = sum(1 for p in info if p["commonality_judgment"] == 1)
+
+        # LLM annotation fields
+        annot = llm.get(gid, {})
+        focal_stance_revealed = annot.get("focal_stance_revealed", None)
+        post_stance_cg = annot.get("post_stance_common_ground", None)
+        cg_type = annot.get("common_ground_type", None)
+        initial_alignment = annot.get("initial_alignment", None)
 
         dyads.append(
             {
@@ -120,6 +153,11 @@ def build_dyad_metadata(
                 "max_distance": max(distances) if distances else None,
                 "commonality_count": commonality_count,
                 "n_participants": len(info),
+                # LLM fields
+                "focal_stance_revealed": focal_stance_revealed,
+                "post_stance_cg": post_stance_cg,
+                "cg_type": cg_type,
+                "initial_alignment": initial_alignment,
             }
         )
 
@@ -150,6 +188,8 @@ class ChatViewer:
         self.distance_filter_var = tk.StringVar(value="off")
         self.domain_var = tk.StringVar(value="All")
         self.question_var = tk.StringVar(value="All")
+        self.stance_revealed_var = tk.StringVar(value="any")
+        self.llm_cg_var = tk.StringVar(value="any")
 
         # Collect unique domains and questions
         self.all_domains = sorted({
@@ -160,7 +200,7 @@ class ChatViewer:
         })
 
         self.root.title("Chat Transcript Viewer")
-        self.root.geometry("950x980")
+        self.root.geometry("950x1080")
         self.root.configure(bg=BG)
 
         # Dark theme style
@@ -366,16 +406,62 @@ class ChatViewer:
         self.distance_scale.pack(side="left", padx=(10, 4))
         self.distance_val_label.pack(side="left")
 
-        # Row 5: Domain and question dropdowns
+        # Row 5: Stance revealed filter (LLM)
         row5 = ttk.Frame(filter_frame)
         row5.pack(fill="x", pady=4)
 
-        ttk.Label(row5, text="Domain:", font=FONT_MD_BOLD).pack(
+        ttk.Label(row5, text="Stance revealed:", font=FONT_MD_BOLD).pack(
+            side="left", padx=(0, 8)
+        )
+
+        self.revealed_buttons: dict[str, ttk.Button] = {}
+        for mode, label in [
+            ("any", "Any"),
+            ("yes", "Yes"),
+            ("no", "Never revealed"),
+        ]:
+            btn = ttk.Button(
+                row5,
+                text=label,
+                command=lambda m=mode: self._set_toggle("stance_revealed", m),
+                style="ToggleActive.TButton" if mode == "any" else "Toggle.TButton",
+            )
+            btn.pack(side="left", padx=2)
+            self.revealed_buttons[mode] = btn
+
+        # Row 6: LLM common ground filter
+        row6 = ttk.Frame(filter_frame)
+        row6.pack(fill="x", pady=4)
+
+        ttk.Label(row6, text="LLM common ground:", font=FONT_MD_BOLD).pack(
+            side="left", padx=(0, 8)
+        )
+
+        self.llm_cg_buttons: dict[str, ttk.Button] = {}
+        for mode, label in [
+            ("any", "Any"),
+            ("yes", "Found CG"),
+            ("no", "No CG"),
+        ]:
+            btn = ttk.Button(
+                row6,
+                text=label,
+                command=lambda m=mode: self._set_toggle("llm_cg", m),
+                style="ToggleActive.TButton" if mode == "any" else "Toggle.TButton",
+            )
+            btn.pack(side="left", padx=2)
+            self.llm_cg_buttons[mode] = btn
+
+        # Row 7: Domain and question dropdowns
+        row7 = ttk.Frame(filter_frame)
+        row7.pack(fill="x", pady=4)
+
+        ttk.Label(row7, text="Domain:", font=FONT_MD_BOLD).pack(
             side="left", padx=(0, 4)
         )
 
         self.domain_combo = ttk.Combobox(
-            row5,
+            row7,
             textvariable=self.domain_var,
             values=["All"] + self.all_domains,
             state="readonly",
@@ -385,12 +471,12 @@ class ChatViewer:
         self.domain_combo.pack(side="left", padx=(0, 16))
         self.domain_combo.bind("<<ComboboxSelected>>", self._on_dropdown_change)
 
-        ttk.Label(row5, text="Question:", font=FONT_MD_BOLD).pack(
+        ttk.Label(row7, text="Question:", font=FONT_MD_BOLD).pack(
             side="left", padx=(0, 4)
         )
 
         self.question_combo = ttk.Combobox(
-            row5,
+            row7,
             textvariable=self.question_var,
             values=["All"] + self.all_questions,
             state="readonly",
@@ -483,6 +569,12 @@ class ChatViewer:
         elif group == "distance_filter":
             self.distance_filter_var.set(value)
             buttons = self.distance_buttons
+        elif group == "stance_revealed":
+            self.stance_revealed_var.set(value)
+            buttons = self.revealed_buttons
+        elif group == "llm_cg":
+            self.llm_cg_var.set(value)
+            buttons = self.llm_cg_buttons
         else:
             return
 
@@ -541,6 +633,8 @@ class ChatViewer:
         dist_thresh = self.distance_val_var.get()
         domain = self.domain_var.get()
         question = self.question_var.get()
+        revealed_mode = self.stance_revealed_var.get()
+        llm_cg_mode = self.llm_cg_var.get()
 
         filtered = []
         for d in self.all_dyads:
@@ -594,6 +688,20 @@ class ChatViewer:
                 if dist_mode == "at_least" and not any(x >= dist_thresh for x in distances):
                     continue
 
+            # Stance revealed filter (LLM annotation)
+            if revealed_mode != "any" and d["focal_stance_revealed"] is not None:
+                if revealed_mode == "yes" and not d["focal_stance_revealed"]:
+                    continue
+                if revealed_mode == "no" and d["focal_stance_revealed"]:
+                    continue
+
+            # LLM common ground filter
+            if llm_cg_mode != "any" and d["post_stance_cg"] is not None:
+                if llm_cg_mode == "yes" and not d["post_stance_cg"]:
+                    continue
+                if llm_cg_mode == "no" and d["post_stance_cg"]:
+                    continue
+
             filtered.append(d["group_id"])
 
         self.filtered_groups = filtered
@@ -626,12 +734,29 @@ class ChatViewer:
         # Get participant info
         info = get_dyad_info(self.chat, gid)
 
-        # Focal question
+        # Focal question and LLM annotation
+        dyad_data = next((d for d in self.all_dyads if d["group_id"] == gid), None)
         if info:
             self.focal_label.config(text=f"Focal: {info[0]['focal_question']}")
-            self.domain_label.config(
-                text=f"Domain: {info[0]['focal_domain']}  |  Stance: {info[0]['stance']}"
-            )
+            stance_text = f"Domain: {info[0]['focal_domain']}  |  Stance: {info[0]['stance']}"
+            if dyad_data:
+                rev = dyad_data.get("focal_stance_revealed")
+                cg = dyad_data.get("post_stance_cg")
+                cg_type = dyad_data.get("cg_type")
+                align = dyad_data.get("initial_alignment")
+                llm_parts = []
+                if rev is not None:
+                    llm_parts.append(f"Revealed: {'Yes' if rev else 'No'}")
+                if align:
+                    llm_parts.append(f"Alignment: {align}")
+                if cg is not None:
+                    cg_str = f"CG: {'Yes' if cg else 'No'}"
+                    if cg and cg_type and cg_type != "none":
+                        cg_str += f" ({cg_type.replace('_', ' ')})"
+                    llm_parts.append(cg_str)
+                if llm_parts:
+                    stance_text += "  |  LLM: " + ", ".join(llm_parts)
+            self.domain_label.config(text=stance_text)
 
         # Build author → pid map from messages
         group_msgs = self.msgs[self.msgs["group_id"] == gid].sort_values(
