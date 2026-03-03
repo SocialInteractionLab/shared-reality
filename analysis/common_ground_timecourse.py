@@ -86,7 +86,7 @@ def _(mo):
 
 
 @app.cell
-def _(N_BOOT, RNG, np):
+def _(N_BOOT, Path, RNG, np, pd, subprocess, tempfile):
     def bootstrap_mean_ci(
         values: np.ndarray, n_boot: int = N_BOOT
     ) -> tuple[float, float, float]:
@@ -99,6 +99,23 @@ def _(N_BOOT, RNG, np):
             idx = RNG.integers(0, n, size=n)
             boot[b] = values[idx].mean()
         return values.mean(), *np.percentile(boot, [2.5, 97.5])
+
+    def cluster_bootstrap_mean_ci(
+        values: pd.Series,
+        cluster_ids: pd.Series,
+        n_boot: int = N_BOOT,
+    ) -> tuple[float, float, float]:
+        """Bootstrap mean and 95% CI, resampling at the cluster (dyad) level."""
+        unique_ids = cluster_ids.unique()
+        n_clusters = len(unique_ids)
+        if n_clusters == 0:
+            return np.nan, np.nan, np.nan
+        boot_means = np.empty(n_boot)
+        for b in range(n_boot):
+            sampled = RNG.choice(unique_ids, size=n_clusters, replace=True)
+            mask = cluster_ids.isin(sampled)
+            boot_means[b] = values[mask].mean()
+        return values.mean(), *np.percentile(boot_means, [2.5, 97.5])
 
     def kaplan_meier(
         times: np.ndarray, events: np.ndarray
@@ -126,7 +143,82 @@ def _(N_BOOT, RNG, np):
         below = np.where(km_surv <= 0.5)[0]
         return km_times[below[0]] if len(below) > 0 else np.inf
 
-    return bootstrap_mean_ci, kaplan_meier, km_median
+    def run_glmer(
+        df: pd.DataFrame,
+        formula: str,
+        r_setup: str = "",
+        r_post: str = "",
+    ) -> str:
+        """Fit a binomial GLMER via R subprocess. Returns R output as string.
+
+        Args:
+            df: Data to pass to R.
+            formula: R formula string (e.g. "y ~ x + (1 | group)").
+            r_setup: Extra R code to run after loading data (e.g. releveling factors).
+            r_post: Extra R code to run after fitting (e.g. emmeans contrasts).
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            csv_path = Path(tmpdir) / "data.csv"
+            df.to_csv(csv_path, index=False)
+
+            r_script = f"""
+library(lme4)
+d <- read.csv("{csv_path}")
+{r_setup}
+m <- glmer({formula}, data = d, family = binomial,
+    control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5)))
+print(summary(m))
+{r_post}
+"""
+            r_path = Path(tmpdir) / "model.R"
+            r_path.write_text(r_script)
+            result = subprocess.run(
+                ["Rscript", str(r_path)], capture_output=True, text=True,
+            )
+            output = result.stdout
+            if result.returncode != 0:
+                output += f"\n\nSTDERR:\n{result.stderr}"
+            return output
+
+    def run_glmer_emmeans(
+        df: pd.DataFrame,
+        formula: str,
+        emmeans_spec: str,
+        contrast_method: str = "pairwise",
+        p_adjust: str = "none",
+        r_setup: str = "",
+    ) -> str:
+        """Fit a binomial GLMER and compute emmeans contrasts via R subprocess.
+
+        Args:
+            df: Data to pass to R.
+            formula: R formula string.
+            emmeans_spec: Emmeans spec (e.g. "~ stance | common_ground_type").
+            contrast_method: Contrast method (e.g. "pairwise", "trt.vs.ctrl").
+            p_adjust: P-value adjustment method.
+            r_setup: Extra R code to run after loading data.
+        """
+        r_post = f"""
+library(emmeans)
+emm <- emmeans(m, {emmeans_spec})
+cat("\\n--- Estimated Marginal Means (probability scale) ---\\n")
+print(summary(emm, type = "response"))
+contr <- contrast(emm, method = "{contrast_method}", adjust = "{p_adjust}")
+cat("\\n--- Contrasts ---\\n")
+print(summary(contr))
+cat("\\n--- Contrasts (odds ratios) ---\\n")
+print(summary(contr, type = "response"))
+"""
+        return run_glmer(df, formula, r_setup=r_setup, r_post=r_post)
+
+    return (
+        bootstrap_mean_ci,
+        cluster_bootstrap_mean_ci,
+        kaplan_meier,
+        km_median,
+        run_glmer,
+        run_glmer_emmeans,
+    )
 
 
 @app.cell
@@ -144,7 +236,7 @@ def _(BIN_SECONDS, DATA_DIR, pd):
 
 
 @app.cell
-def _(STANCE_ORDER, bootstrap_mean_ci, df_revealed, pd, time_bins):
+def _(STANCE_ORDER, cluster_bootstrap_mean_ci, df_revealed, pd, time_bins):
     _results = []
     for _stance in STANCE_ORDER:
         for _t in time_bins:
@@ -154,8 +246,9 @@ def _(STANCE_ORDER, bootstrap_mean_ci, df_revealed, pd, time_bins):
             ]
             if len(_sub) == 0:
                 continue
-            _vals = _sub["post_stance_common_ground"].astype(int).values
-            _mean, _lo, _hi = bootstrap_mean_ci(_vals)
+            _vals = _sub["post_stance_common_ground"].astype(int)
+            _ids = _sub["group_id"]
+            _mean, _lo, _hi = cluster_bootstrap_mean_ci(_vals, _ids)
             _results.append({
                 "stance": _stance,
                 "time_seconds": _t,
@@ -171,7 +264,7 @@ def _(STANCE_ORDER, bootstrap_mean_ci, df_revealed, pd, time_bins):
 
 @app.cell
 def _(STANCE_ORDER, mo, res_df):
-    _lines = ["## P(Common Ground) Over Time\n"]
+    _lines = ["## P(Common Ground) Over Time (cluster-bootstrapped CIs)\n"]
     for _stance in STANCE_ORDER:
         _sub = res_df[res_df["stance"] == _stance]
         _lines.append(f"**{_stance.capitalize()}:**\n")
@@ -184,6 +277,29 @@ def _(STANCE_ORDER, mo, res_df):
             )
         _lines.append("")
     mo.md("\n".join(_lines))
+    return
+
+
+@app.cell
+def _(df_revealed, mo, run_glmer):
+    # Formal GLMER: does CG increase over time? Does the rate differ by stance?
+    _tc_data = df_revealed.copy()
+    _tc_data["time_min"] = _tc_data["time_seconds"] / 60.0
+    _tc_data["time_c"] = _tc_data["time_min"] - _tc_data["time_min"].mean()
+    _tc_data["stance_e"] = _tc_data["stance"].map({"opposing": 0.5, "shared": -0.5})
+    _tc_data["post_stance_cg"] = _tc_data["post_stance_common_ground"].astype(int)
+
+    _output = run_glmer(
+        _tc_data[["post_stance_cg", "time_c", "stance_e", "group_id"]],
+        "post_stance_cg ~ time_c * stance_e + (1 + time_c | group_id)",
+    )
+
+    mo.md(
+        "## GLMER: P(Common Ground) Over Time\n\n"
+        "Model: `post_stance_cg ~ time_c * stance_e + (1 + time_c | group_id)`\n\n"
+        "Formal test that CG increases over time and whether the rate differs by stance.\n\n"
+        f"```\n{_output}\n```"
+    )
     return
 
 
@@ -290,14 +406,12 @@ def _(
 
 
 @app.cell
-def _(Path, df_revealed, mo, subprocess, tempfile):
+def _(df_revealed, mo, run_glmer):
+    # Binomial GLMERs for each CG type over time
     _cg_data = df_revealed[df_revealed["post_stance_common_ground"] == True].copy()
     _cg_data["time_min"] = _cg_data["time_seconds"] / 60.0
     _cg_data["time_c"] = _cg_data["time_min"] - _cg_data["time_min"].mean()
-    # Effect coding: opposing = +0.5, shared = -0.5
-    _cg_data["stance_e"] = _cg_data["stance"].map(
-        {"opposing": 0.5, "shared": -0.5}
-    )
+    _cg_data["stance_e"] = _cg_data["stance"].map({"opposing": 0.5, "shared": -0.5})
 
     _substantive_types = [
         "rapport_only", "related_subtopic", "same_values", "different_topic",
@@ -307,45 +421,32 @@ def _(Path, df_revealed, mo, subprocess, tempfile):
             _cg_data["common_ground_type"] == _cg_type
         ).astype(int)
 
-    with tempfile.TemporaryDirectory() as _tmpdir:
-        _csv_path = Path(_tmpdir) / "cg_timecourse_data.csv"
-        _cg_data.to_csv(_csv_path, index=False)
+    _lines = [
+        "## Mixed-Effects Logistic Regression: CG Type ~ Time x Stance\n",
+        "Model: `is_<type> ~ time_c * stance_e + (1 | group_id)`\n",
+    ]
 
-        # Build R script for all 4 separate binomial glmers
-        _r_lines = ['library(lme4)\n', f'd <- read.csv("{_csv_path}")\n']
-        for _cg_type in _substantive_types:
-            _dv = f"is_{_cg_type}"
-            _r_lines.append(f'cat("\\n=== {_cg_type.replace("_", " ").title()} ===\\n")')
-            _r_lines.append(
-                f'm <- glmer({_dv} ~ time_c * stance_e + (1 | group_id), '
-                f'data = d, family = binomial, '
-                f'control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5)))'
-            )
-            _r_lines.append("print(summary(m))")
-
-        _r_path = Path(_tmpdir) / "cg_type_glmer.R"
-        _r_path.write_text("\n".join(_r_lines))
-        _result = subprocess.run(
-            ["Rscript", str(_r_path)], capture_output=True, text=True,
+    for _cg_type in _substantive_types:
+        _dv = f"is_{_cg_type}"
+        _cols = [_dv, "time_c", "stance_e", "group_id"]
+        _output = run_glmer(
+            _cg_data[_cols],
+            f"{_dv} ~ time_c * stance_e + (1 | group_id)",
         )
-        timecourse_glmer_output = _result.stdout
-        if _result.returncode != 0:
-            timecourse_glmer_output += f"\n\nSTDERR:\n{_result.stderr}"
+        _title = _cg_type.replace("_", " ").title()
+        _lines.append(f"### {_title}\n")
+        _lines.append(f"```\n{_output}\n```\n")
 
-    mo.md(
-        "## Mixed-Effects Logistic Regression: CG Type ~ Time x Stance\n\n"
-        "Model: `is_<type> ~ time_c * stance_e + (1 | group_id)`\n\n"
-        f"```\n{timecourse_glmer_output}\n```"
-    )
+    mo.md("\n".join(_lines))
     return
 
 
 @app.cell
 def _(Path, df_revealed, subprocess, tempfile):
+    # Multinomial logistic regression — must stay as R subprocess (no lme4 wrapper)
     _cg_data = df_revealed[df_revealed["post_stance_common_ground"] == True].copy()
     _cg_data["time_min"] = _cg_data["time_seconds"] / 60.0
     _cg_data["time_c"] = _cg_data["time_min"] - _cg_data["time_min"].mean()
-    # Effect coding: opposing = +0.5, shared = -0.5
     _cg_data["stance_e"] = _cg_data["stance"].map({"opposing": 0.5, "shared": -0.5})
 
     with tempfile.TemporaryDirectory() as _tmpdir:
@@ -400,26 +501,18 @@ def _(Path, df_revealed, subprocess, tempfile):
         multinom_output = _result.stdout
         if _result.returncode != 0:
             multinom_output += f"\n\nSTDERR:\n{_result.stderr}"
-    return
+    return (multinom_output,)
 
 
 @app.cell
-def _(mo):
-    mo.md("""
-    ## Multinomial Logistic Regression: CG Type ~ Time x Stance
-
-    "
-        "Model: `cg_type ~ time_c * stance_e` (reference: rapport_only)
-
-    "
+def _(mo, multinom_output):
+    mo.md(
+        "## Multinomial Logistic Regression: CG Type ~ Time x Stance\n\n"
+        "Model: `cg_type ~ time_c * stance_e` (reference: rapport_only)\n\n"
         "Each coefficient compares odds of that CG type vs rapport_only. "
-        "Positive `stance_e` means opposing dyads are shifted *toward* that type.
-
-    "
-        f"```
-    {multinom_output}
-    ```
-    """)
+        "Positive `stance_e` means opposing dyads are shifted *toward* that type.\n\n"
+        f"```\n{multinom_output}\n```"
+    )
     return
 
 
@@ -652,121 +745,66 @@ def _(
 
 
 @app.cell
-def _(Path, merged_df, mo, subprocess, tempfile):
+def _(merged_df, mo, run_glmer):
+    # GLMER: P(predictShared) ~ CG Type x Stance
     _model_data = merged_df[["predictShared", "substantive_cg", "common_ground_type",
                               "stance_e", "pid", "groupId"]].copy()
 
-    with tempfile.TemporaryDirectory() as _tmpdir:
-        _csv_path = Path(_tmpdir) / "model_data.csv"
-        _model_data.to_csv(_csv_path, index=False)
+    _m1_output = run_glmer(
+        _model_data,
+        "predictShared ~ substantive_cg * stance_e + (1 | pid) + (1 | groupId)",
+    )
 
-        _r_script = r"""
-    library(lme4)
-
-    d <- read.csv("CSV_PATH")
-    d$common_ground_type <- relevel(factor(d$common_ground_type), ref = "none")
-
-    cat("=== MODEL 1: Binary (Substantive CG vs None/Rapport) ===\n")
-    cat("predictShared ~ substantive_cg * stance_e + (1 | pid) + (1 | groupId)\n\n")
-    m1 <- glmer(predictShared ~ substantive_cg * stance_e + (1 | pid) + (1 | groupId),
-            data = d, family = binomial,
-            control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5)))
-    print(summary(m1))
-
-    cat("\n\n=== MODEL 2: 5-level CG Type (ref = none) ===\n")
-    cat("predictShared ~ common_ground_type * stance_e + (1 | pid) + (1 | groupId)\n\n")
-    m2 <- glmer(predictShared ~ common_ground_type * stance_e + (1 | pid) + (1 | groupId),
-            data = d, family = binomial,
-            control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5)))
-    print(summary(m2))
-    """.replace("CSV_PATH", str(_csv_path))
-
-        _r_path = Path(_tmpdir) / "cg_glmer.R"
-        _r_path.write_text(_r_script)
-        _result = subprocess.run(
-            ["Rscript", str(_r_path)], capture_output=True, text=True,
-        )
-        cg_glmer_output = _result.stdout
-        if _result.returncode != 0:
-            cg_glmer_output += f"\n\nSTDERR:\n{_result.stderr}"
+    _m2_output = run_glmer(
+        _model_data,
+        "predictShared ~ common_ground_type * stance_e + (1 | pid) + (1 | groupId)",
+        r_setup='d$common_ground_type <- relevel(factor(d$common_ground_type), ref = "none")',
+    )
 
     mo.md(
         "## Mixed-Effects Logistic Regression: P(predictShared) ~ CG Type x Stance\n\n"
-        f"```\n{cg_glmer_output}\n```"
+        "### Model 1: Binary (Substantive CG vs None/Rapport)\n"
+        "`predictShared ~ substantive_cg * stance_e + (1 | pid) + (1 | groupId)`\n\n"
+        f"```\n{_m1_output}\n```\n\n"
+        "### Model 2: 5-level CG Type (ref = none)\n"
+        "`predictShared ~ common_ground_type * stance_e + (1 | pid) + (1 | groupId)`\n\n"
+        f"```\n{_m2_output}\n```"
     )
     return
 
 
 @app.cell
-def _(Path, merged_df, mo, subprocess, tempfile):
+def _(merged_df, mo, run_glmer_emmeans):
     # Simple effects: stance difference within each CG type
     _model_data = merged_df[["predictShared", "common_ground_type",
                               "stance", "pid", "groupId"]].copy()
 
-    with tempfile.TemporaryDirectory() as _tmpdir:
-        _csv_path = Path(_tmpdir) / "simple_effects_data.csv"
-        _model_data.to_csv(_csv_path, index=False)
-
-        _r_script = r"""
-    library(lme4)
-    library(emmeans)
-
-    d <- read.csv("CSV_PATH")
-    d$common_ground_type <- factor(d$common_ground_type)
-    d$stance <- factor(d$stance)
-
-    # Fit model with factor stance (not effect-coded) for emmeans compatibility
-    m <- glmer(predictShared ~ common_ground_type * stance + (1 | pid) + (1 | groupId),
-           data = d, family = binomial,
-           control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5)))
-
-    cat("=== Simple Effects: Stance Difference Within Each CG Type ===\n")
-    cat("Contrasts: opposing - shared on the log-odds scale\n\n")
-
-    emm <- emmeans(m, ~ stance | common_ground_type)
-    contr <- pairs(emm, reverse = TRUE)
-    cat("--- Contrasts (log-odds) ---\n")
-    print(summary(contr))
-
-    cat("\n--- Contrasts (odds ratios) ---\n")
-    print(summary(contr, type = "response"))
-
-    cat("\n--- Estimated Marginal Means (probability scale) ---\n")
-    print(summary(emm, type = "response"))
-    """.replace("CSV_PATH", str(_csv_path))
-
-        _r_path = Path(_tmpdir) / "simple_effects.R"
-        _r_path.write_text(_r_script)
-        _result = subprocess.run(
-            ["Rscript", str(_r_path)], capture_output=True, text=True,
-        )
-        _simple_fx_output = _result.stdout
-        if _result.returncode != 0:
-            _simple_fx_output += f"\n\nSTDERR:\n{_result.stderr}"
+    _output = run_glmer_emmeans(
+        _model_data,
+        "predictShared ~ common_ground_type * stance + (1 | pid) + (1 | groupId)",
+        emmeans_spec="~ stance | common_ground_type",
+        contrast_method="pairwise",
+        r_setup="d$common_ground_type <- factor(d$common_ground_type)\nd$stance <- factor(d$stance)",
+    )
 
     mo.md(
         "## Simple Effects: Stance Difference Within Each CG Type\n\n"
         "Tests whether opposing vs shared stance dyads differ in P(predictShared) "
         "within each common ground type level.\n\n"
-        f"```\n{_simple_fx_output}\n```"
+        f"```\n{_output}\n```"
     )
     return
 
 
 @app.cell
 def _(
-    Path,
     STANCE_ORDER,
     merged_df,
     mo,
     nochat_baseline,
-    subprocess,
-    tempfile,
+    run_glmer,
 ):
     # Does finding CG predict higher P(predictShared)?
-    # Mixed-effects logistic regression: found_cg as predictor
-
-    # Descriptive stats first
     _lines = ["## Does Finding CG Predict Higher Expected Commonality?\n"]
     _lines.append("Mixed-effects logistic regression: "
                    "`predictShared ~ found_cg * stance_e + (1 | pid) + (1 | groupId)`\n")
@@ -787,54 +825,32 @@ def _(
         _lines.append(f"- **Delta (found - not found)**: "
                        f"{_cg_yes.mean() - _cg_no.mean():.3f}\n")
 
-    # Run glmer via R subprocess
     _model_data = merged_df[["predictShared", "found_cg", "stance_e",
                               "stance", "pid", "groupId"]].copy()
 
-    with tempfile.TemporaryDirectory() as _tmpdir:
-        _csv_path = Path(_tmpdir) / "found_cg_data.csv"
-        _model_data.to_csv(_csv_path, index=False)
+    # Full model
+    _full_output = run_glmer(
+        _model_data,
+        "predictShared ~ found_cg * stance_e + (1 | pid) + (1 | groupId)",
+    )
+    _lines.append("### Full model: found_cg * stance_e\n")
+    _lines.append(f"```\n{_full_output}\n```\n")
 
-        _r_script = r"""
-    library(lme4)
+    # Opposing only
+    _opp_output = run_glmer(
+        _model_data[_model_data["stance"] == "opposing"],
+        "predictShared ~ found_cg + (1 | pid) + (1 | groupId)",
+    )
+    _lines.append("### Opposing only: found_cg\n")
+    _lines.append(f"```\n{_opp_output}\n```\n")
 
-    d <- read.csv("CSV_PATH")
-
-    cat("=== Full model: found_cg * stance_e ===\n")
-    cat("predictShared ~ found_cg * stance_e + (1 | pid) + (1 | groupId)\n\n")
-    m_full <- glmer(predictShared ~ found_cg * stance_e + (1 | pid) + (1 | groupId),
-        data = d, family = binomial,
-        control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5)))
-    print(summary(m_full))
-
-    cat("\n\n=== Opposing only: found_cg ===\n")
-    cat("predictShared ~ found_cg + (1 | pid) + (1 | groupId)\n\n")
-    d_opp <- d[d$stance == "opposing", ]
-    m_opp <- glmer(predictShared ~ found_cg + (1 | pid) + (1 | groupId),
-        data = d_opp, family = binomial,
-        control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5)))
-    print(summary(m_opp))
-
-    cat("\n\n=== Shared only: found_cg ===\n")
-    cat("predictShared ~ found_cg + (1 | pid) + (1 | groupId)\n\n")
-    d_sha <- d[d$stance == "shared", ]
-    m_sha <- glmer(predictShared ~ found_cg + (1 | pid) + (1 | groupId),
-        data = d_sha, family = binomial,
-        control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5)))
-    print(summary(m_sha))
-    """.replace("CSV_PATH", str(_csv_path))
-
-        _r_path = Path(_tmpdir) / "found_cg_glmer.R"
-        _r_path.write_text(_r_script)
-        _result = subprocess.run(
-            ["Rscript", str(_r_path)], capture_output=True, text=True,
-        )
-        _glmer_out = _result.stdout
-        if _result.returncode != 0:
-            _glmer_out += f"\n\nSTDERR:\n{_result.stderr}"
-
-    _lines.append("### GLMER Results\n")
-    _lines.append(f"```\n{_glmer_out}\n```")
+    # Shared only
+    _sha_output = run_glmer(
+        _model_data[_model_data["stance"] == "shared"],
+        "predictShared ~ found_cg + (1 | pid) + (1 | groupId)",
+    )
+    _lines.append("### Shared only: found_cg\n")
+    _lines.append(f"```\n{_sha_output}\n```")
 
     mo.md("\n".join(_lines))
     return
@@ -907,7 +923,7 @@ def _(DATA_DIR, N_BOOT, RNG, STANCE_ORDER, merged_df, mo, np, pd):
 
 
 @app.cell
-def _(DATA_DIR, Path, STANCE_ORDER, merged_df, mo, pd, subprocess, tempfile):
+def _(DATA_DIR, STANCE_ORDER, merged_df, mo, pd, run_glmer_emmeans):
     # Formal test: each chat CG condition vs no-chat baseline (per stance)
     _resp = pd.read_csv(DATA_DIR / "responses.csv", low_memory=False)
 
@@ -935,41 +951,14 @@ def _(DATA_DIR, Path, STANCE_ORDER, merged_df, mo, pd, subprocess, tempfile):
 
         _combined = pd.concat([_nochat, _chat], ignore_index=True)
 
-        with tempfile.TemporaryDirectory() as _tmpdir:
-            _csv_path = Path(_tmpdir) / "dunnett_data.csv"
-            _combined.to_csv(_csv_path, index=False)
-
-            _r_script = r"""
-    library(lme4)
-    library(emmeans)
-
-    d <- read.csv("CSV_PATH")
-    d$condition <- relevel(factor(d$condition), ref = "no_chat")
-
-    m <- glmer(predictShared ~ condition + (1 | pid),
-           data = d, family = binomial,
-           control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5)))
-
-    cat("--- Model summary ---\n")
-    print(summary(m))
-
-    emm <- emmeans(m, ~ condition)
-    cat("\n--- EMMs (probability scale) ---\n")
-    print(summary(emm, type = "response"))
-
-    cat("\n--- Dunnett contrasts vs no_chat ---\n")
-    contr <- contrast(emm, method = "trt.vs.ctrl", ref = "no_chat")
-    print(summary(contr, type = "response"))
-    """.replace("CSV_PATH", str(_csv_path))
-
-            _r_path = Path(_tmpdir) / "dunnett.R"
-            _r_path.write_text(_r_script)
-            _result = subprocess.run(
-                ["Rscript", str(_r_path)], capture_output=True, text=True,
-            )
-            _output = _result.stdout
-            if _result.returncode != 0:
-                _output += f"\n\nSTDERR:\n{_result.stderr}"
+        _output = run_glmer_emmeans(
+            _combined,
+            "predictShared ~ condition + (1 | pid)",
+            emmeans_spec="~ condition",
+            contrast_method="trt.vs.ctrl",
+            p_adjust="dunnettx",
+            r_setup='d$condition <- relevel(factor(d$condition), ref = "no_chat")',
+        )
 
         _all_output_lines.append(f"### {_stance.capitalize()} stance\n")
         _all_output_lines.append(f"```\n{_output}\n```\n")
@@ -1238,60 +1227,25 @@ def _(
 
 
 @app.cell
-def _(Path, merged_tc_df, mo, subprocess, tempfile):
-    # Simple effects: stance difference within each CG type (timecourse-based)
+def _(merged_tc_df, mo, run_glmer_emmeans):
+    # Simple effects: stance within CG type (timecourse-based)
     _model_data = merged_tc_df[["predictShared", "tc_common_ground_type",
                                  "stance", "pid", "groupId"]].copy()
     _model_data = _model_data.rename(columns={"tc_common_ground_type": "common_ground_type"})
 
-    with tempfile.TemporaryDirectory() as _tmpdir:
-        _csv_path = Path(_tmpdir) / "tc_simple_effects_data.csv"
-        _model_data.to_csv(_csv_path, index=False)
-
-        _r_script = r"""
-    library(lme4)
-    library(emmeans)
-
-    d <- read.csv("CSV_PATH")
-    d$common_ground_type <- factor(d$common_ground_type)
-    d$stance <- factor(d$stance)
-
-    m <- glmer(predictShared ~ common_ground_type * stance + (1 | pid) + (1 | groupId),
-           data = d, family = binomial,
-           control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5)))
-
-    cat("=== Model Summary ===\n")
-    print(summary(m))
-
-    cat("\n=== Simple Effects: Stance Difference Within Each CG Type ===\n")
-    cat("Contrasts: opposing - shared on the log-odds scale\n\n")
-
-    emm <- emmeans(m, ~ stance | common_ground_type)
-    contr <- pairs(emm, reverse = TRUE)
-    cat("--- Contrasts (log-odds) ---\n")
-    print(summary(contr))
-
-    cat("\n--- Contrasts (odds ratios) ---\n")
-    print(summary(contr, type = "response"))
-
-    cat("\n--- Estimated Marginal Means (probability scale) ---\n")
-    print(summary(emm, type = "response"))
-    """.replace("CSV_PATH", str(_csv_path))
-
-        _r_path = Path(_tmpdir) / "tc_simple_effects.R"
-        _r_path.write_text(_r_script)
-        _result = subprocess.run(
-            ["Rscript", str(_r_path)], capture_output=True, text=True,
-        )
-        _tc_fx_output = _result.stdout
-        if _result.returncode != 0:
-            _tc_fx_output += f"\n\nSTDERR:\n{_result.stderr}"
+    _output = run_glmer_emmeans(
+        _model_data,
+        "predictShared ~ common_ground_type * stance + (1 | pid) + (1 | groupId)",
+        emmeans_spec="~ stance | common_ground_type",
+        contrast_method="pairwise",
+        r_setup="d$common_ground_type <- factor(d$common_ground_type)\nd$stance <- factor(d$stance)",
+    )
 
     mo.md(
         "## Simple Effects: Stance Within CG Type (Timecourse-Based)\n\n"
         "Same simple-effects tests but using the timecourse CG annotation "
         "(last bin per dyad) instead of the full-conversation annotation.\n\n"
-        f"```\n{_tc_fx_output}\n```"
+        f"```\n{_output}\n```"
     )
     return
 
