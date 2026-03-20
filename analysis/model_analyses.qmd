@@ -404,6 +404,13 @@ cat_styles = {
 }
 cat_to_human = {'matched': 'observed', 'same_domain': 'same_domain', 'different_domain': 'different_domain'}
 
+# No-chat baseline: mean expected commonality per stance (across all question types)
+nochat_baseline = {}
+nochat_data_fig = data[data['experiment'] == 'no-chat'].copy()
+for stance in ['shared', 'opposing']:
+    subset = nochat_data_fig[nochat_data_fig['stance'] == stance]
+    nochat_baseline[stance] = subset['participant_binary_prediction'].mean()
+
 for ax, (stance, title) in zip(axes, [('opposing', 'Opposing Stance'), ('shared', 'Shared Stance')]):
     for cat in ['matched', 'same_domain', 'different_domain']:
         subset = timecourse[(timecourse['stance'] == stance) & (timecourse['question_category'] == cat)]
@@ -415,12 +422,16 @@ for ax, (stance, title) in zip(axes, [('opposing', 'Opposing Stance'), ('shared'
         ax.axhline(human_rates[(stance, cat_to_human[cat])], color=style['color'],
                    linestyle='--', linewidth=1.5, alpha=0.7)
 
+    # No-chat baseline
+    ax.axhline(nochat_baseline[stance], color='black',
+               linestyle=':', linewidth=1.5, alpha=0.8, label='Imagined Interaction Baseline')
+
     ax.set_xlabel('Conversation Time (s)')
     ax.set_title(title, fontweight='bold', color=COLORS[stance])
     ax.set_ylim(0.1, 1.0)
     ax.set_xlim(-5, 195)
 
-axes[0].legend(frameon=False, loc='upper right', fontsize=9)
+axes[0].legend(frameon=False, loc='upper left', fontsize=9)
 axes[0].set_ylabel('Expected Commonality', fontweight='bold')
 axes[0].text(-0.12, 1.05, 'A', transform=axes[0].transAxes, fontsize=16, fontweight='bold')
 axes[1].text(-0.08, 1.05, 'B', transform=axes[1].transAxes, fontsize=16, fontweight='bold')
