@@ -960,7 +960,7 @@ def submit_batch(batch_requests: List[dict], experiment_name: str = EXPERIMENT_N
     gcs_input = f"gs://{GCS_BUCKET}/{GCS_PREFIX}/input/{experiment_name}.jsonl"
     gcs_output = f"gs://{GCS_BUCKET}/{GCS_PREFIX}/output/{experiment_name}/"
 
-    subprocess.run(["gsutil", "cp", str(batch_file), gcs_input], check=True)
+    subprocess.run(["/Users/f004p57/Documents/google-cloud-sdk/bin/gsutil", "cp", str(batch_file), gcs_input], check=True)
     print(f"Uploaded to {gcs_input}")
 
     # Use REST API directly to support global endpoint
@@ -1034,7 +1034,7 @@ def _download_raw(experiment_name: str) -> tuple[Path, List[dict]]:
     output_uri = info["output_uri"]
 
     result = subprocess.run(
-        ["gsutil", "ls", f"{output_uri}**predictions.jsonl"],
+        ["/Users/f004p57/Documents/google-cloud-sdk/bin/gsutil", "ls", f"{output_uri}**predictions.jsonl"],
         capture_output=True,
         text=True,
     )
@@ -1045,7 +1045,7 @@ def _download_raw(experiment_name: str) -> tuple[Path, List[dict]]:
     print(f"Downloading {predictions_uri}...")
 
     raw_file = RESULTS_DIR / f"{experiment_name}_raw.jsonl"
-    subprocess.run(["gsutil", "cp", predictions_uri, str(raw_file)], check=True)
+    subprocess.run(["/Users/f004p57/Documents/google-cloud-sdk/bin/gsutil", "cp", predictions_uri, str(raw_file)], check=True)
 
     # Parse results
     records = []
