@@ -46,3 +46,4 @@ analysis/supplement.tex
 analysis/supplement.rmarkdown
 .env
 data/llm_results/pshared_timecourse_tau1.csv
+/data/llm_results/old
