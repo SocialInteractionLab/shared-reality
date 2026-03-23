@@ -605,35 +605,44 @@ Based on the full conversation (prior context + current window), have both parti
 established their stances on the focal topic by the end of this window? And specifically, \
 does the current window contain the moment where stances become established?
 
-PHASE 2 — FEELINGS OF SHARED REALITY (in the current window only):
-In this time window, are the participants experiencing feelings of shared reality — a sense \
-that they are on the same page, in agreement, or share commonality about something? \
-Look for moments where both participants recognize or express that they think, feel, or \
-believe something in a similar way. This is NOT merely being polite or getting along — it \
-requires a genuine sense of agreement or commonality about the world.
+PHASE 2 — POST-STANCE JUDGMENTS (only if stances have been established):
+If stances have NOT been established yet (focal_stance_revealed is false), set all \
+post_stance fields to defaults: post_stance_shared_reality=false, post_stance_topic_scope="none", \
+post_stance_inner_state_dimension="none", post_stance_differences=false.
 
-Note: feelings of shared reality can fluctuate. People may find agreement in one moment \
-and disagree in the next. Classify what is happening RIGHT NOW in this window.
+2A. FEELINGS OF SHARED REALITY — In this window, are the participants experiencing \
+genuine feelings of shared reality — a sense of being on the same page, in agreement, \
+or sharing commonality about their inner states (thoughts, feelings, beliefs)? \
+This is NOT merely being polite or getting along — saying things like "that's cool" or \
+"nice to meet you" signals respect for the other person, but is NOT genuine shared \
+reality. It requires a real moment of recognized agreement or commonality about the world.
 
-TOPIC SCOPE — What is the topic of the shared reality?
+Note: feelings of shared reality can fluctuate. People may agree in one moment and \
+disagree in the next. Classify what is happening RIGHT NOW in this window.
+
+2B. TOPIC SCOPE — If shared reality IS present (post_stance_shared_reality is true), \
+what topic is the shared reality about?
   a) same_values: On the focal topic — they feel on the same page about the question \
 they were asked to discuss
   b) related_subtopic: On a closely related subtopic within the same domain
   c) different_topic: On a different topic that came up naturally
-  d) rapport_only: Only general rapport or politeness without a substantive feeling of \
-being on the same page about the world
-  e) none: No feelings of shared reality in this window
+If shared reality is NOT present, classify what the conversation is about:
+  d) rapport_only: Only general rapport, politeness, or pleasantries — NOT genuine \
+agreement, just being friendly or signaling respect
+  e) none: No meaningful exchange in this window
 
-INNER STATE DIMENSION — What kind of inner state do they feel aligned on?
-  a) shared_thoughts: They feel they think about something in the same way — similar \
-perspectives, judgments, or ways of seeing things
-  b) shared_feelings: They feel they have the same emotional reactions — similar \
-emotions, concerns, or affective responses
-  c) shared_beliefs: They feel they hold similar beliefs — similar convictions, values, \
-or principles about how the world is or should be
-  d) none: No substantive shared inner states (when post_stance_topic_scope is "rapport_only" or "none")
+2C. INNER STATE DIMENSION — If shared reality is present, what kind of inner state \
+do they feel aligned on?
+  a) shared_thoughts: They think about something in the same way — similar perspectives, \
+judgments, or ways of seeing things
+  b) shared_feelings: They feel the same way — similar emotions, concerns, or affective \
+responses
+  c) shared_beliefs: They hold similar beliefs — similar convictions, values, or \
+principles about how the world is or should be
+  d) none: No shared inner states (when post_stance_shared_reality is false)
 
-CONVERSATIONAL GOAL — What are the participants primarily trying to do in this window?
+CONVERSATIONAL GOAL (classify for ALL windows, regardless of stance establishment):
+What are the participants primarily trying to do in this window?
   a) stance_sharing: Establishing or sharing their positions/perspectives on the topic
   b) perspective_seeking: Asking questions, trying to understand the other's viewpoint
   c) finding_commonality: Actively looking for agreement, shared ground, or common experiences
@@ -641,14 +650,18 @@ CONVERSATIONAL GOAL — What are the participants primarily trying to do in this
   e) sharing_experience: Relating personal stories or backgrounds that explain their views
   f) rapport_building: Small talk, humor, pleasantries, off-topic bonding
   g) exploring_nuance: Discussing subtleties, qualifying positions, acknowledging complexity
-  h) other: A goal that does not fit the above categories (describe in post_stance_conversational_goal_reasoning)
+  h) other: A goal that does not fit the above categories (describe in conversational_goal_reasoning)
 
 CONSISTENCY RULES:
-- If post_stance_shared_reality is false → post_stance_topic_scope MUST be "none", \
-post_stance_inner_state_dimension MUST be "none"
-- If post_stance_topic_scope is "rapport_only" or "none" → post_stance_inner_state_dimension MUST be "none"
-- If post_stance_topic_scope is "same_values", "related_subtopic", or "different_topic" → \
-post_stance_inner_state_dimension MUST be one of: "shared_thoughts", "shared_feelings", "shared_beliefs"
+- If focal_stance_revealed is false → ALL post_stance_ fields use defaults (false/none), \
+but conversational_goal and conversational_goal_reasoning should still be classified
+- If post_stance_shared_reality is true → post_stance_topic_scope MUST be "same_values", \
+"related_subtopic", or "different_topic" (substantive topics only)
+- If post_stance_shared_reality is true → post_stance_inner_state_dimension MUST be one \
+of: "shared_thoughts", "shared_feelings", "shared_beliefs"
+- If post_stance_shared_reality is false → post_stance_topic_scope MUST be "rapport_only" \
+or "none" (no substantive shared reality happening)
+- If post_stance_shared_reality is false → post_stance_inner_state_dimension MUST be "none"
 
 Return JSON with this exact structure:
 {{
@@ -663,8 +676,8 @@ Return JSON with this exact structure:
   "post_stance_inner_state_reasoning": "explain your categorization — why this inner state dimension and not another?",
   "post_stance_differences": true/false,
   "post_stance_differences_description": "any differences or disagreements in this window",
-  "post_stance_conversational_goal": "stance_sharing" | "perspective_seeking" | "finding_commonality" | "persuading" | "sharing_experience" | "rapport_building" | "exploring_nuance" | "other",
-  "post_stance_conversational_goal_reasoning": "explain your categorization — why this goal and not another? cite specific messages"
+  "conversational_goal": "stance_sharing" | "perspective_seeking" | "finding_commonality" | "persuading" | "sharing_experience" | "rapport_building" | "exploring_nuance" | "other",
+  "conversational_goal_reasoning": "explain your categorization — why this goal and not another? cite specific messages"
 }}"""
 
 
@@ -845,7 +858,7 @@ def download_and_parse_perbin_timecourse(
                 "post_stance_shared_reality",
                 "post_stance_topic_scope",
                 "post_stance_inner_state_dimension",
-                "post_stance_conversational_goal",
+                "conversational_goal",
             ]
             if col in df.columns
         ]
@@ -898,7 +911,7 @@ def download_and_parse_perbin_timecourse(
                               "post_stance_shared_reality_description",
                               "post_stance_inner_state_reasoning",
                               "post_stance_differences_description",
-                              "post_stance_conversational_goal_reasoning",
+                              "conversational_goal_reasoning",
                               "initial_alignment_reasoning",
                               "initial_alignment_evidence",
                               "last_stance_message", "key_exchange",
