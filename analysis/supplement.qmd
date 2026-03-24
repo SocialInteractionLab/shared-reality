@@ -270,10 +270,64 @@ This raises a further question: among participants who perceived disagreement, d
 
 Two patterns emerged (@fig-sr-generalization). First, both groups showed nearly identical focal-topic commonality expectations ($\sim$30%), consistent with their accurate perception of disagreement. Second, finding commonality during conversation drove a generalization effect: participants in dyads who found commonality expected more commonality on same-domain questions (61.5% vs. 51.7%, +9.8pp) and different-domain questions (62.7% vs. 57.7%, +5.0pp) compared to those who did not. Discovering common ground during conversation did not distort perception of the focal disagreement, but rather broadened commonality expectations to new topics---a spillover effect that decayed with topical distance from the conversation.
 
+To test this statistically, we fit a logistic mixed-effects model predicting expected commonality on generalization items (same-domain and different-domain) from whether the dyad found commonality during chat (`ever_sr`), question domain distance (`is_same_domain`, contrast-coded ±0.5), and their interaction, with random intercepts for dyad and participant nested within dyad (@tbl-sr-glmm). Dyads who found commonality during chat showed a marginally significant boost in inferred commonality ($b = 0.39$, $z = 1.94$, $p = .052$). Commonality inferences were significantly higher for same-domain than different-domain items ($b = -0.31$, $z = -2.64$, $p = .008$). The interaction was not significant ($p = .12$), suggesting the commonality boost was comparable across domain distances.
+
+```{r}
+#| label: tbl-sr-glmm
+#| tbl-cap: "Logistic mixed-effects model predicting expected commonality on generalization items (same-domain and different-domain) for accurate opposing-stance perceivers. ever_sr: whether LLM-annotated commonality emerged during conversation; is_same_domain: same-domain (+0.5) vs. different-domain (−0.5). Random intercepts for dyad and participant nested within dyad."
+
+library(lme4)
+library(readr)
+library(dplyr)
+
+data_dir_r <- file.path("..", "data")
+
+# Load LLM annotations → dyad-level SR summary
+annot <- read_csv(file.path(data_dir_r, "llm_results",
+                             "perbin_commonality_timecourse_15s_aggregated.csv"),
+                   show_col_types = FALSE)
+dyad_sr <- annot |>
+  filter(focal_stance_revealed == TRUE) |>
+  group_by(group_id) |>
+  summarise(ever_sr = as.integer(any(post_stance_shared_reality)), .groups = "drop") |>
+  rename(groupId = group_id)
+
+# Load responses → accurate opposing-stance perceivers
+resp <- read_csv(file.path(data_dir_r, "responses.csv"), show_col_types = FALSE)
+
+focal <- resp |>
+  filter(experiment == "chat", question_type == "observed", stance == "opposing") |>
+  mutate(pred_error = abs(postChatResponse - partner_response))
+accurate_pids <- focal |> filter(pred_error <= 1) |> distinct(pid)
+
+# Join: generalization items for accurate opposing perceivers × SR labels
+d <- resp |>
+  filter(experiment == "chat", stance == "opposing",
+         question_type %in% c("same_domain", "different_domain")) |>
+  semi_join(accurate_pids, by = "pid") |>
+  inner_join(dyad_sr, by = "groupId") |>
+  mutate(
+    ever_sr = factor(ever_sr),
+    is_same_domain = ifelse(question_type == "same_domain", 0.5, -0.5)
+  )
+
+m <- glmer(
+  predictShared ~ ever_sr * is_same_domain + (1 | groupId / pid),
+  data = d,
+  family = binomial,
+  control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5))
+)
+
+summary(m)$coefficients |>
+  as.data.frame() |>
+  tibble::rownames_to_column("Term") |>
+  knitr::kable(digits = c(0, 3, 3, 2, 4), col.names = c("Term", "Estimate", "SE", "z", "p"))
+```
+
 ```{python}
 #| label: fig-sr-generalization
 #| fig-cap: "Expected commonality gradient for perceived-disagreement participants (prediction error ≤ 1), split by whether LLM-annotated commonality emerged during conversation. Both groups show equivalent focal-topic expectations (~30%), but dyads who found commonality generalize more broadly: +9.8pp for same-domain and +5.0pp for different-domain questions. Error bars show 95% cluster-bootstrapped CIs (resampling dyads)."
-#| fig-width: 12
+#| fig-width: 7
 #| fig-height: 5
 
 import polars as pl_
@@ -303,21 +357,22 @@ accurate_pids = set(focal[focal['pred_error'] <= 1]['pid'])
 opp_all = resp[(resp['experiment'] == 'chat') & (resp['stance'] == 'opposing')
                & (resp['pid'].isin(accurate_pids))].copy()
 opp_all = opp_all.merge(dyad_sr_pd[['groupId', 'ever_sr']], on='groupId', how='inner')
-opp_all['sr_group'] = opp_all['ever_sr'].map({1: 'Found commonality during chat', 0: 'Did not find commonality during chat'})
+opp_all['sr_group'] = opp_all['ever_sr'].map({1: 'Found commonality', 0: 'Did not find commonality'})
 
 question_type_order = ['observed', 'same_domain', 'different_domain']
-question_type_labels = {'observed': 'Focal topic', 'same_domain': 'Same domain',
-                        'different_domain': 'Different domain'}
-sr_groups = ['Found commonality during chat', 'Did not find commonality during chat']
-bar_color = '#648FFF'
+question_type_labels = ['Focal Topic', 'Same Domain', 'Different Domain']
+sr_groups = ['Did not find commonality', 'Found commonality']
+colors = {'Found commonality': '#1757fe', 'Did not find commonality': '#b0c6ff'}
+legend_labels = {'Found commonality': 'Yes', 'Did not find commonality': 'No'}
 
 rng = np.random.default_rng(42)
 n_boot = 10_000
 
-fig, axes = plt.subplots(1, 2, figsize=(12, 5), sharey=True)
+x = np.arange(len(question_type_order))
+bar_w = 0.35
+fig, ax = plt.subplots(figsize=(7, 5))
 
-for i, sg in enumerate(sr_groups):
-    ax = axes[i]
+for si, sg in enumerate(sr_groups):
     sub = opp_all[opp_all['sr_group'] == sg]
     n_dyads = sub['groupId'].nunique()
 
@@ -338,25 +393,25 @@ for i, sg in enumerate(sr_groups):
         ci_los.append(lo * 100)
         ci_his.append(hi * 100)
 
-    x = np.arange(len(question_type_order))
-    ax.bar(x, means, color=bar_color, edgecolor='white', width=0.6)
-    ax.errorbar(x, means,
+    offset = -bar_w / 2 if si == 0 else bar_w / 2
+    ax.bar(x + offset, means, bar_w, color=colors[sg], edgecolor='white',
+           label=legend_labels[sg])
+    ax.errorbar(x + offset, means,
                 yerr=[[m - lo for m, lo in zip(means, ci_los)],
                       [hi - m for m, hi in zip(means, ci_his)]],
-                fmt='none', ecolor='black', capsize=5, linewidth=1.5)
-    ax.set_xticks(x)
-    ax.set_xticklabels([question_type_labels[qt] for qt in question_type_order], fontsize=12)
-    ax.set_ylim(0, 100)
-    ax.set_yticks([0, 25, 50, 75, 100])
-    ax.set_yticklabels(['0%', '25%', '50%', '75%', '100%'], fontsize=12)
-    ax.set_title(f'{sg}\n(N = {n_dyads} dyads)', fontsize=14)
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
+                fmt='none', ecolor='black', capsize=4, linewidth=1.5)
 
-    for j, (m, hi) in enumerate(zip(means, ci_his)):
-        ax.text(j, hi + 2, f'{m:.1f}%', ha='center', fontsize=11, fontweight='bold')
+ax.set_xticks(x)
+ax.set_xticklabels(question_type_labels, fontsize=12)
+ax.set_ylabel('Expected Commonality', fontsize=14)
+ax.set_ylim(0, 100)
+ax.set_yticks([0, 25, 50, 75, 100])
+ax.set_yticklabels(['0%', '25%', '50%', '75%', '100%'], fontsize=12)
+ax.spines['top'].set_visible(False)
+ax.spines['right'].set_visible(False)
+ax.legend(title='Contained LLM-annotated commonality', fontsize=11,
+          title_fontsize=11, frameon=False, loc='upper right')
 
-axes[0].set_ylabel('Expected Commonality', fontsize=14)
 plt.tight_layout()
 plt.savefig(figures_dir / 'figure_s_sr_generalization.pdf', dpi=300, bbox_inches='tight')
 plt.show()
