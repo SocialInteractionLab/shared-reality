@@ -203,6 +203,165 @@ summary(model)
 confint(model, method = "Wald")
 ```
 
+## Finding Commonality During Conversation Generalized Beyond Focal Topic Despite Disagreement {#sec-prediction-error}
+
+Of the 316 opposing-stance participants in the real interaction condition, 120 (38.0%) expected commonality on the focal question---the very topic on which they were matched for disagreement. We split these participants by whether they perceived agreement or disagreement with their partner (@fig-prediction-error).
+
+```{python}
+#| label: fig-prediction-error
+#| fig-cap: "Perceived agreement and focal commonality among opposing-stance conversation participants. Participants are split by whether they perceived disagreement (prediction error ≤ 1) or perceived agreement (prediction error > 1) with their partner on the focal question. Bars are colored by whether participants expected commonality. Percentages show the proportion within each group."
+#| fig-width: 6
+#| fig-height: 4
+
+resp = pd.read_csv(data_dir / 'responses.csv', low_memory=False)
+focal = resp[(resp['question_type'] == 'observed') & (resp['experiment'] == 'chat')
+             & (resp['stance'] == 'opposing')].copy()
+focal = focal.dropna(subset=['postChatResponse', 'partner_response'])
+focal['pred_error'] = (focal['postChatResponse'] - focal['partner_response']).abs().astype(int)
+focal['expects_commonality'] = focal['participant_binary_prediction'].astype(int)
+focal['accuracy_group'] = np.where(focal['pred_error'] <= 1,
+                                   'Perceived\nDisagreement',
+                                   'Perceived\nAgreement')
+
+plt.rcParams.update({'font.family': 'Helvetica Neue', 'font.size': 11,
+                     'axes.spines.top': False, 'axes.spines.right': False})
+
+groups = ['Perceived\nDisagreement', 'Perceived\nAgreement']
+color_yes = '#2ecc71'
+color_no = '#95a5a6'
+
+n_yes = [int(focal[focal['accuracy_group'] == g]['expects_commonality'].sum()) for g in groups]
+n_no = [int((1 - focal[focal['accuracy_group'] == g]['expects_commonality']).sum()) for g in groups]
+
+fig, ax = plt.subplots(figsize=(6, 4))
+x = np.arange(len(groups))
+bar_width = 0.5
+
+ax.bar(x, n_no, bar_width, color=color_no, label='No Commonality')
+ax.bar(x, n_yes, bar_width, bottom=n_no, color=color_yes, label='Expect Commonality')
+
+for i in range(len(groups)):
+    total = n_yes[i] + n_no[i]
+    pct_yes = n_yes[i] / total * 100
+    pct_no = n_no[i] / total * 100
+    if n_no[i] > 0:
+        ax.text(i, n_no[i] / 2, f'{pct_no:.0f}%', ha='center', va='center',
+                fontsize=10, fontweight='bold', color='white')
+    if n_yes[i] > 0:
+        ax.text(i, n_no[i] + n_yes[i] / 2, f'{pct_yes:.0f}%', ha='center', va='center',
+                fontsize=10, fontweight='bold', color='white')
+    ax.text(i, total + max(n_yes[j] + n_no[j] for j in range(len(groups))) * 0.02,
+            f'N={total}', ha='center', fontsize=9, color='#555')
+
+ax.set_xticks(x)
+ax.set_xticklabels(groups, fontsize=11)
+ax.set_ylabel('N Participants', fontsize=11)
+ax.set_title('Opposing Stance — Real Interaction', fontsize=13, fontweight='bold')
+ax.legend(frameon=False, fontsize=10, loc='upper right')
+
+plt.tight_layout()
+plt.savefig(figures_dir / 'figure_s_focal_commonality.pdf', dpi=300, bbox_inches='tight')
+plt.show()
+```
+
+Participants who perceived agreement ($N = 50$; prediction error $> 1$) expected commonality at a rate of 78.0%. These participants formed an inaccurate impression of their partner's stance during conversation, and their commonality expectation follows naturally from this misperception. More theoretically revealing are the participants who perceived disagreement ($N = 266$; prediction error $\leq 1$): despite recognizing the disagreement, 30.5% still expected commonality. Among the 120 participants who expected focal commonality, 81 (67.5%) came from this perceived-disagreement group, while only 39 (32.5%) came from the perceived-agreement group.
+
+This raises a further question: among participants who perceived disagreement, does finding common ground during conversation affect their broader commonality expectations? To address this, we used LLM annotations of conversation transcripts to classify whether each dyad found moments of commonality after establishing their initial stances. We then compared the generalization gradient---P(predictShared) across focal topic, same-domain, and different-domain questions---for opposing-stance dyads who did vs. did not find commonality during conversation (@fig-sr-generalization).
+
+Two patterns emerged (@fig-sr-generalization). First, both groups showed nearly identical focal-topic commonality expectations ($\sim$30%), consistent with their accurate perception of disagreement. Second, finding commonality during conversation drove a generalization effect: participants in dyads who found commonality expected more commonality on same-domain questions (61.5% vs. 51.7%, +9.8pp) and different-domain questions (62.7% vs. 57.7%, +5.0pp) compared to those who did not. Discovering common ground during conversation did not distort perception of the focal disagreement, but rather broadened commonality expectations to new topics---a spillover effect that decayed with topical distance from the conversation.
+
+```{python}
+#| label: fig-sr-generalization
+#| fig-cap: "Expected commonality gradient for perceived-disagreement participants (prediction error ≤ 1), split by whether LLM-annotated commonality emerged during conversation. Both groups show equivalent focal-topic expectations (~30%), but dyads who found commonality generalize more broadly: +9.8pp for same-domain and +5.0pp for different-domain questions. Error bars show 95% cluster-bootstrapped CIs (resampling dyads)."
+#| fig-width: 12
+#| fig-height: 5
+
+import polars as pl_
+
+resp = pd.read_csv(data_dir / 'responses.csv', low_memory=False)
+annot = pl_.read_csv(data_dir / 'llm_results' / 'perbin_commonality_timecourse_15s_aggregated.csv')
+
+# Dyad-level SR summary from LLM annotations
+df_post = annot.filter(pl_.col('focal_stance_revealed') == True)
+dyad_sr = (
+    df_post.group_by('group_id')
+    .agg(
+        pl_.col('post_stance_shared_reality').any().alias('ever_sr'),
+        pl_.col('stance').first(),
+    )
+    .with_columns(pl_.col('ever_sr').cast(pl_.Int64))
+)
+dyad_sr_pd = dyad_sr.rename({'group_id': 'groupId'}).to_pandas()
+
+# Compute prediction error from focal (observed) rows
+focal = resp[(resp['experiment'] == 'chat') & (resp['question_type'] == 'observed')
+             & (resp['stance'] == 'opposing')].copy()
+focal['pred_error'] = (focal['postChatResponse'] - focal['partner_response']).abs()
+accurate_pids = set(focal[focal['pred_error'] <= 1]['pid'])
+
+# Filter to accurate opposing chat participants, all question types
+opp_all = resp[(resp['experiment'] == 'chat') & (resp['stance'] == 'opposing')
+               & (resp['pid'].isin(accurate_pids))].copy()
+opp_all = opp_all.merge(dyad_sr_pd[['groupId', 'ever_sr']], on='groupId', how='inner')
+opp_all['sr_group'] = opp_all['ever_sr'].map({1: 'Found commonality during chat', 0: 'Did not find commonality during chat'})
+
+question_type_order = ['observed', 'same_domain', 'different_domain']
+question_type_labels = {'observed': 'Focal topic', 'same_domain': 'Same domain',
+                        'different_domain': 'Different domain'}
+sr_groups = ['Found commonality during chat', 'Did not find commonality during chat']
+bar_color = '#648FFF'
+
+rng = np.random.default_rng(42)
+n_boot = 10_000
+
+fig, axes = plt.subplots(1, 2, figsize=(12, 5), sharey=True)
+
+for i, sg in enumerate(sr_groups):
+    ax = axes[i]
+    sub = opp_all[opp_all['sr_group'] == sg]
+    n_dyads = sub['groupId'].nunique()
+
+    means, ci_los, ci_his = [], [], []
+    for qt in question_type_order:
+        qt_data = sub[sub['question_type'] == qt]
+        vals = qt_data['predictShared'].values
+        ids = qt_data['groupId'].values
+        unique_ids = np.unique(ids)
+        n_clusters = len(unique_ids)
+        boot_means = np.empty(n_boot)
+        for b in range(n_boot):
+            sampled = rng.choice(unique_ids, size=n_clusters, replace=True)
+            mask = np.isin(ids, sampled)
+            boot_means[b] = vals[mask].mean()
+        means.append(vals.mean() * 100)
+        lo, hi = np.percentile(boot_means, [2.5, 97.5])
+        ci_los.append(lo * 100)
+        ci_his.append(hi * 100)
+
+    x = np.arange(len(question_type_order))
+    ax.bar(x, means, color=bar_color, edgecolor='white', width=0.6)
+    ax.errorbar(x, means,
+                yerr=[[m - lo for m, lo in zip(means, ci_los)],
+                      [hi - m for m, hi in zip(means, ci_his)]],
+                fmt='none', ecolor='black', capsize=5, linewidth=1.5)
+    ax.set_xticks(x)
+    ax.set_xticklabels([question_type_labels[qt] for qt in question_type_order], fontsize=12)
+    ax.set_ylim(0, 100)
+    ax.set_yticks([0, 25, 50, 75, 100])
+    ax.set_yticklabels(['0%', '25%', '50%', '75%', '100%'], fontsize=12)
+    ax.set_title(f'{sg}\n(N = {n_dyads} dyads)', fontsize=14)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+
+    for j, (m, hi) in enumerate(zip(means, ci_his)):
+        ax.text(j, hi + 2, f'{m:.1f}%', ha='center', fontsize=11, fontweight='bold')
+
+axes[0].set_ylabel('Expected Commonality', fontsize=14)
+plt.tight_layout()
+plt.savefig(figures_dir / 'figure_s_sr_generalization.pdf', dpi=300, bbox_inches='tight')
+plt.show()
+```
+
 ## Factor Structure of Belief Space {#sec-factor}
 
 We computed factor loadings via eigendecomposition of the 35-question belief correlation matrix. @fig-factor-structure panel A shows the scree plot comparing observed eigenvalues against the 95th percentile from parallel analysis (eigenvalues computed from random data with the same dimensions). The first five components exceeded the parallel analysis threshold, suggesting $k = 5$ factors. These five factors explained 34% of total variance.
@@ -214,22 +373,6 @@ We computed factor loadings via eigendecomposition of the 35-question belief cor
 #| fig-cap: "Factor structure of belief space. (A) Scree plot comparing observed eigenvalues (solid) against the 95th percentile from parallel analysis (dashed). The first five components exceed the threshold; shaded area highlights variance captured by the retained factors. (B) Factor loadings for the first five principal components, grouped by domain. Red indicates positive loadings, blue indicates negative loadings (clipped to ±0.6)."
 #| fig-width: 12
 #| fig-height: 5
-
-# Re-import after R chunks
-import sys
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-from pathlib import Path
-
-# Find project root (contains data/ directory)
-base_dir = Path.cwd().resolve()
-while base_dir.name and not (base_dir / 'data').exists():
-    base_dir = base_dir.parent
-data_dir = base_dir / 'data'
-figures_dir = base_dir / 'outputs' / 'figures'
-sys.path.insert(0, str(base_dir))
 
 from models.model import load_factor_loadings
 
@@ -344,21 +487,6 @@ We evaluated model performance across factor dimensionalities from $k = 1$ (firs
 #| fig-height: 5
 
 import json
-import numpy as np
-import pandas as pd
-from pathlib import Path
-import sys
-import matplotlib.pyplot as plt
-
-# Re-establish base_dir after R chunks
-base_dir = Path.cwd().resolve()
-while base_dir.name and not (base_dir / 'data').exists():
-    base_dir = base_dir.parent
-data_dir = base_dir / 'data'
-figures_dir = base_dir / 'outputs' / 'figures'
-figures_dir.mkdir(parents=True, exist_ok=True)
-
-sys.path.insert(0, str(base_dir))
 from models.model import CommonalityModel
 
 # Load evaluation data fresh
@@ -541,20 +669,6 @@ For each participant, we computed a "self-structure gradient"—the difference b
 #| fig-width: 9
 #| fig-height: 4
 
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-from pathlib import Path
-
-# Find project root (contains data/ directory)
-base_dir = Path.cwd().resolve()
-while base_dir.name and not (base_dir / 'data').exists():
-    base_dir = base_dir.parent
-data_dir = base_dir / 'data'
-figures_dir = base_dir / 'outputs' / 'figures'
-
-import sys
-sys.path.insert(0, str(base_dir))
 from analysis.utils import (
     compute_gradient,
     bootstrap_gradient,
@@ -731,23 +845,6 @@ This robustness check asks: what happens to model fit if we use participants' pe
 #| fig-cap: "Robustness check comparing model fit using ground-truth vs. perceived partner response as input. Human gradient is fixed (experimenter-defined stance). Model captures slightly less of human behavior when using perceived responses (~85%) compared to ground truth (~95%). Error bars are 95% bootstrap CIs."
 #| fig-width: 8
 #| fig-height: 5
-
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-from pathlib import Path
-import sys
-
-# Re-establish base_dir
-base_dir = Path.cwd().resolve()
-while base_dir.name and not (base_dir / 'data').exists():
-    base_dir = base_dir.parent
-data_dir = base_dir / 'data'
-figures_dir = base_dir / 'outputs' / 'figures'
-sys.path.insert(0, str(base_dir))
-
-from models.model import CommonalityModel
-import json
 
 # Load data
 responses_df = pd.read_csv(data_dir / 'responses.csv', low_memory=False)
@@ -931,9 +1028,7 @@ print(f"and {pct_perc:.0f}% using perceived responses.")
 print(f"The ~{pct_gt - pct_perc:.0f} percentage point drop shows modest sensitivity to input noise.")
 ```
 
-Using ground-truth responses as model input, the model captures ~95% of the human gradient. When we instead use participants' perceived responses, model fit decreases modestly to ~85%. This ~10 percentage point drop indicates the model is somewhat sensitive to input quality, but remains robust overall.
-
-The better fit with ground truth is expected: commonality inferences likely occur at the moment participants encode the shown response, drawing on that original representation. The later recall measurement (perceived response) is a separate cognitive operation that can introduce memory errors. Thus, feeding the model participants' (sometimes incorrect) recall gives it different inputs than those participants actually used when forming their inferences, degrading fit. For participants who accurately recalled the shown response, ground truth and perceived inputs are identical by definition.
+Only 65% of participants exactly recalled the shown response, though 86% were within 1 point. Using ground-truth responses as model input, the Bayesian model captured 96% of the human gradient (+0.118, 95% CI [+0.093, +0.142]; human: +0.123 [+0.089, +0.159]). Using participants' recalled responses instead, model fit decreased modestly to 87% (+0.107 [+0.084, +0.131]). The confidence intervals for both model variants overlap with the human gradient, indicating that model performance remains consistent with human behavior regardless of which input is used.
 
 We can further examine this by splitting participants by how accurately they recalled the shown response.
 
@@ -1026,8 +1121,8 @@ ax.set_xticklabels(error_labels)
 ax.set_xlabel('Memory Error (|Perceived - Ground Truth|)', fontsize=11)
 ax.set_ylabel('Generalization Gradient', fontsize=12)
 ax.set_title('A. Human Behavior', fontweight='bold', loc='left')
-ax.text(len(error_levels) - 0.5, human_gradient + 0.005, 'Overall', fontsize=9, ha='right', color='gray')
-ax.set_ylim(-0.05, 0.25)
+ax.text(len(error_levels) - 0.5, human_gradient + 0.015, 'Overall', fontsize=9, ha='right', color='gray')
+ax.set_ylim(-0.05, 0.30)
 
 # Panel B: Model fit by error level (using perceived input)
 ax = axes[1]
@@ -1059,8 +1154,8 @@ ax.set_xticklabels(error_labels)
 ax.set_xlabel('Memory Error (|Perceived - Ground Truth|)', fontsize=11)
 ax.set_ylabel('Generalization Gradient', fontsize=12)
 ax.set_title('B. Model Fit (Perceived Input)', fontweight='bold', loc='left')
-ax.legend(frameon=False, loc='upper right')
-ax.set_ylim(-0.05, 0.25)
+ax.legend(frameon=False, loc='upper left', bbox_to_anchor=(0.0, 1.0))
+ax.set_ylim(-0.05, 0.30)
 
 plt.tight_layout()
 plt.savefig(figures_dir / 'figure_s_memory_split.pdf', dpi=300, bbox_inches='tight')
@@ -1078,9 +1173,7 @@ for i, (label, h, m_gt, m_p, n) in enumerate(zip(error_labels, human_grads, mode
     print(f"{label_clean:<20} {n:>5} {h:>+10.3f} {m_gt:>+8.3f} ({pct_gt:>3.0f}%) {m_p:>+8.3f} ({pct_p:>3.0f}%)")
 ```
 
-Participants with exact recall and imperfect recall show similar behavioral gradients (@fig-human-by-memory A), suggesting memory errors did not substantially affect inference quality. The model captures human behavior well for both groups (@fig-human-by-memory B): for exact-recall participants, the model (using shown response) captures ~95% of human gradient; for imperfect-recall participants, the model (using their recalled response) still captures ~85% of human gradient.
-
-This pattern suggests participants likely encoded the shown response correctly at the time of inference, even if their later recall was imperfect. The robustness of both human behavior and model fit across memory accuracy levels provides confidence in our main findings.
+Human behavioral gradients were similar across memory error levels (@fig-human-by-memory A), suggesting that recall accuracy did not substantially affect inference quality. Model fit using perceived responses as input remained reasonable for participants with small recall errors (@fig-human-by-memory B). However, for participants with memory errors of 2+ points on the Likert scale (N=76), model fit dropped substantially (16% of the human gradient). This is because 79% of these participants recalled a response that effectively flipped the perceived stance relative to the experimenter-defined condition---e.g., a participant assigned to the "opposing" condition who recalled their partner as agreeing with them. Since stance is always experimenter-defined, the model receives input implying the opposite stance from what determines the participant's behavioral group, producing a mismatch. Importantly, these participants' own behavioral gradients remained intact, consistent with them using the experimenter-defined stance information rather than their (inaccurate) recalled response.
 
 ## Question Property Norms {#sec-norms}
 
@@ -1091,18 +1184,6 @@ To characterize the stimulus set, an independent sample (N = 15–27 per dimensi
 #| fig-cap: "Normative ratings of question properties by domain. Cells show mean ratings (0–100 scale) across questions within each domain. Domains are sorted by mean personal informativeness rating."
 #| fig-width: 10
 #| fig-height: 5
-
-# Re-import after R chunks (reticulate loses Python state)
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-from pathlib import Path
-
-# Re-establish paths
-base_dir = Path.cwd().resolve()
-while base_dir.name and not (base_dir / 'data').exists():
-    base_dir = base_dir.parent
-data_dir = base_dir / 'data'
 
 # Load questions with norms
 questions = pd.read_csv(data_dir / 'questions.csv')
@@ -1148,7 +1229,7 @@ plt.tight_layout()
 plt.show()
 ```
 
-@fig-norms shows domain-level means for key question properties. Religion and identity questions were rated as most personally revealing, while politics and religion were rated as most divisive. Lifestyle and preference questions were rated as least deep and least controversial. This variation in perceived question properties aligns with the differential transfer effects observed across domains and validates that experimenter-assigned domain labels capture meaningful psychological distinctions in how people perceive different types of beliefs.
+@fig-norms shows domain-level means for all eight question properties. Religion and identity questions were rated as most personal; politics was rated as most divisive; morality questions were rated as deepest, most informative, and most interesting; and preferences were rated as most self-relevant and most likely to be discussed, yet least divisive and least deep. Expected agreement was lowest for religion (43%) and highest for politics (63%). The variation in perceived question properties across domains validates that experimenter-assigned domain labels capture meaningful psychological distinctions in how people perceive different types of beliefs.
 
 ## Question Feature Moderator Analysis {#sec-moderators}
 
@@ -1161,16 +1242,6 @@ The critical test is the three-way interaction, which would indicate that a ques
 ```{python}
 #| label: moderator-data-prep
 #| output: false
-
-# Prepare data for moderator analysis
-import pandas as pd
-import numpy as np
-from pathlib import Path
-
-base_dir = Path.cwd().resolve()
-while base_dir.name and not (base_dir / 'data').exists():
-    base_dir = base_dir.parent
-data_dir = base_dir / 'data'
 
 # Load responses and questions
 responses = pd.read_csv(data_dir / 'responses.csv', low_memory=False)
@@ -1291,11 +1362,6 @@ The generalization gradients reported in the main text varied across focal domai
 #| fig-width: 7
 #| fig-height: 4
 
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-
 df_pd = pd.read_csv('/tmp/df_pd_processed.csv', low_memory=False)
 
 # Exclude observed question — only generalization items
@@ -1382,7 +1448,6 @@ plt.show()
 ```{python}
 #| output: false
 # Reload processed data (saved in load-data chunk)
-import pandas as pd
 df_pd = pd.read_csv('/tmp/df_pd_processed.csv', low_memory=False)
 df_pd.to_csv('/tmp/main_df.csv', index=False)
 ```
@@ -1502,15 +1567,7 @@ For the prior baseline (no conversation), we used a simplified prompt asking the
 #| label: tbl-llm-pshared
 #| tbl-cap: "LLM-predicted Expected Commonality at conversation end (180s) compared to human judgments, by stance condition and question type."
 
-# Re-import after R chunk (knitr breaks Python session)
-import pandas as pd
-from pathlib import Path
-base_dir = Path.cwd().resolve()
-while base_dir.name and not (base_dir / 'data').exists():
-    base_dir = base_dir.parent
-
 llm_dir = base_dir / 'data' / 'llm_results'
-data_dir = base_dir / 'data'
 
 # Load P(shared) timecourse - use final time bin
 pshared_df = pd.read_csv(llm_dir / 'pshared_timecourse.csv')
@@ -1567,8 +1624,6 @@ For shared stance pairs, LLM predictions closely matched human judgments across 
 #| label: tbl-stimuli
 #| tbl-cap: "Survey questions by domain."
 
-# Uses base_dir from previous chunk
-data_dir = base_dir / 'data'
 questions_df = pd.read_csv(data_dir / 'questions.csv')
 questions_df['domain'] = questions_df['domain'].replace('arbitrary', 'Lifestyle').str.capitalize()
 
