@@ -96,24 +96,62 @@ def get_dyad_info(chat: pd.DataFrame, group_id: str) -> list[dict]:
 def load_llm_annotations() -> dict[str, dict]:
     """Load LLM common ground annotations, returning {group_id: annotation_dict}.
 
-    Tries the full annotation first; falls back to timecourse (uses final bin).
-    Returns empty dict if no annotation files exist.
+    Uses the aggregated per-bin commonality timecourse (modal vote across 3 runs).
+    Builds a dyad-level summary: whether stance was revealed, whether post-stance
+    shared reality was ever found, and the broadest topic scope reached.
+    Returns empty dict if the annotation file doesn't exist.
     """
-    full_path = DATA_DIR / "llm_results" / "common_ground.csv"
-    if full_path.exists():
-        df = pd.read_csv(full_path)
-        return {row["group_id"]: row.to_dict() for _, row in df.iterrows()}
+    agg_path = (
+        DATA_DIR / "llm_results" / "perbin_commonality_timecourse_15s_aggregated.csv"
+    )
+    if not agg_path.exists():
+        return {}
 
-    # Fall back to timecourse — use the latest time bin per dyad
-    for suffix in ["15s", "30s", ""]:
-        tc_name = f"common_ground_timecourse_{suffix}.csv" if suffix else "common_ground_timecourse.csv"
-        tc_path = DATA_DIR / "llm_results" / tc_name
-        if tc_path.exists():
-            df = pd.read_csv(tc_path)
-            latest = df.loc[df.groupby("group_id")["time_seconds"].idxmax()]
-            return {row["group_id"]: row.to_dict() for _, row in latest.iterrows()}
+    df = pd.read_csv(agg_path)
 
-    return {}
+    # Filter to post-stance bins only
+    post = df[df["focal_stance_revealed"] == True]
+
+    scope_priority = {
+        "same_values": 4,
+        "related_subtopic": 3,
+        "different_topic": 2,
+        "rapport_only": 1,
+        "none": 0,
+    }
+    priority_to_scope = {v: k for k, v in scope_priority.items()}
+
+    result: dict[str, dict] = {}
+    for gid, group in df.groupby("group_id"):
+        # Whether stance was ever revealed
+        focal_revealed = bool(group["focal_stance_revealed"].any())
+
+        # Post-stance shared reality (from post-stance bins only)
+        post_group = post[post["group_id"] == gid]
+        if len(post_group) > 0:
+            ever_sr = bool(post_group["post_stance_shared_reality"].any())
+            best_priority = (
+                post_group["post_stance_topic_scope"]
+                .map(scope_priority)
+                .max()
+            )
+            best_scope = priority_to_scope.get(best_priority, "none")
+        else:
+            ever_sr = False
+            best_scope = "none"
+
+        # Initial alignment (from first bin where it's set)
+        alignments = group["initial_alignment"].dropna()
+        initial_alignment = alignments.iloc[0] if len(alignments) > 0 else None
+
+        result[gid] = {
+            "focal_stance_revealed": focal_revealed,
+            "post_stance_cg": ever_sr,
+            "cg_type": best_scope,
+            "initial_alignment": initial_alignment,
+        }
+
+    return result
 
 
 def build_dyad_metadata(
