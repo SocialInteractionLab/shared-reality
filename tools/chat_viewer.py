@@ -176,8 +176,8 @@ def build_dyad_metadata(
         # LLM annotation fields
         annot = llm.get(gid, {})
         focal_stance_revealed = annot.get("focal_stance_revealed", None)
-        post_stance_cg = annot.get("post_stance_common_ground", None)
-        cg_type = annot.get("common_ground_type", None)
+        post_stance_cg = annot.get("post_stance_cg", None)
+        cg_type = annot.get("cg_type", None)
         initial_alignment = annot.get("initial_alignment", None)
 
         dyads.append(
@@ -808,20 +808,7 @@ class ChatViewer:
 
         for p in info:
             emoji = next((e for e, pid in author_pid.items() if pid == p["pid"]), "?")
-
-            card = ttk.Frame(self.participant_frame)
-            card.pack(side="left", fill="x", expand=True, padx=(0, 10))
-
             emoji_color = "#FF6B9D" if emoji == "\U0001f431" else "#7EB3FF"
-
-            header = tk.Label(
-                card,
-                text=f"{emoji} {p['pid'][:8]}...",
-                font=FONT_MD_BOLD,
-                fg=emoji_color,
-                bg=BG,
-            )
-            header.pack(anchor="w")
 
             self_resp = LIKERT_LABELS.get(p["self_response"], str(p["self_response"]))
             perceived = (
@@ -839,29 +826,6 @@ class ChatViewer:
                 "#2ecc71" if p["commonality_judgment"] == 1 else "#e74c3c"
             )
 
-            tk.Label(
-                card,
-                text=f"Self: {self_resp} ({p['self_response']})",
-                font=FONT_SM,
-                fg=FG,
-                bg=BG,
-            ).pack(anchor="w")
-            tk.Label(
-                card,
-                text=f"Partner true: {partner_true} ({p['partner_true']})",
-                font=FONT_SM,
-                fg=DIM,
-                bg=BG,
-            ).pack(anchor="w")
-            tk.Label(
-                card,
-                text=f"Perceived partner: {perceived} ({p['perceived_partner']})",
-                font=FONT_SM,
-                fg=FG,
-                bg=BG,
-            ).pack(anchor="w")
-
-            # Prediction error
             err_text = (
                 f"Prediction error: {p['prediction_error']}"
                 if p["prediction_error"] is not None
@@ -876,36 +840,47 @@ class ChatViewer:
                 if p["prediction_error"] is not None
                 else DIM
             )
-            tk.Label(
-                card,
-                text=err_text,
-                font=FONT_SM,
-                fg=err_color,
-                bg=BG,
-            ).pack(anchor="w")
 
-            # Perceived distance
             pdist = p["perceived_distance"]
             pdist_text = (
                 f"Perceived distance: {pdist}"
                 if pdist is not None
                 else "Perceived distance: N/A"
             )
-            tk.Label(
-                card,
-                text=pdist_text,
-                font=FONT_SM,
-                fg=FG,
-                bg=BG,
-            ).pack(anchor="w")
 
-            tk.Label(
-                card,
-                text=f"Expected commonality: {commonality}",
-                font=("Helvetica Neue", 13, "bold"),
-                fg=commonality_color,
+            # Build card as a single selectable Text widget
+            card = tk.Text(
+                self.participant_frame,
+                wrap="word",
+                font=FONT_SM,
                 bg=BG,
-            ).pack(anchor="w")
+                fg=FG,
+                relief="flat",
+                borderwidth=0,
+                highlightthickness=0,
+                padx=4,
+                pady=2,
+                height=7,
+                width=40,
+                cursor="arrow",
+            )
+            card.pack(side="left", fill="x", expand=True, padx=(0, 10))
+
+            # Configure tags for colored text
+            card.tag_configure("header", foreground=emoji_color, font=FONT_MD_BOLD)
+            card.tag_configure("dim", foreground=DIM, font=FONT_SM)
+            card.tag_configure("err", foreground=err_color, font=FONT_SM)
+            card.tag_configure("commonality", foreground=commonality_color, font=("Helvetica Neue", 13, "bold"))
+
+            card.insert("end", f"{emoji} {p['pid']}\n", "header")
+            card.insert("end", f"Self: {self_resp} ({p['self_response']})\n")
+            card.insert("end", f"Partner true: {partner_true} ({p['partner_true']})\n", "dim")
+            card.insert("end", f"Perceived partner: {perceived} ({p['perceived_partner']})\n")
+            card.insert("end", f"{err_text}\n", "err")
+            card.insert("end", f"{pdist_text}\n")
+            card.insert("end", f"Expected commonality: {commonality}", "commonality")
+
+            card.config(state="disabled")
 
         # Render messages
         self.chat_text.config(state="normal")
