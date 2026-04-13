@@ -1,0 +1,72 @@
+{
+  "human_gradient": 0.07745546179090468,
+  "human_rates": {
+    "same_domain_shared": 0.6944444444444444,
+    "same_domain_opposing": 0.5925632911392406,
+    "different_domain_shared": 0.6268518518518519,
+    "different_domain_opposing": 0.6024261603375527
+  },
+  "single_obs": {
+    "params": {
+      "sigma_prior": 1.5,
+      "match_threshold": 2.0,
+      "epsilon": 0.1,
+      "sigma_obs": 0.5
+    },
+    "metrics": {
+      "gradient": 0.07727015018463135,
+      "gradient_error": 0.00018531160627333065,
+      "log_likelihood": -17111.575195401907,
+      "accuracy": 0.6219196428571429,
+      "same_shared": 0.7316522002220154,
+      "same_opposing": 0.638906717300415,
+      "diff_shared": 0.7209633588790894,
+      "diff_opposing": 0.7054880261421204,
+      "obs_shared": 0.8778635859489441,
+      "obs_opposing": 0.26729869842529297
+    }
+  },
+  "multi_obs_shared": {
+    "params": {
+      "sigma_prior": 1.5,
+      "match_threshold": 2.0,
+      "epsilon": 0.01,
+      "sigma_conv": 0.5
+    },
+    "metrics": {
+      "gradient": 0.07572001218795776,
+      "gradient_error": 0.0017354496029469146,
+      "log_likelihood": -20306.826644732617,
+      "accuracy": 0.6161607142857143,
+      "same_shared": 0.8082431554794312,
+      "same_opposing": 0.7188367247581482,
+      "diff_shared": 0.7414155006408691,
+      "diff_opposing": 0.727729082107544,
+      "obs_shared": 0.9483388066291809,
+      "obs_opposing": 0.3431553542613983
+    },
+    "mean_conversation_obs": 1.884375
+  },
+  "multi_obs_separated": {
+    "params": {
+      "sigma_prior": 1.5,
+      "match_threshold": 2.0,
+      "sigma_focal": 0.5,
+      "epsilon": 0.0715870469474962,
+      "sigma_conv": 1.0
+    },
+    "metrics": {
+      "gradient": 0.07745540142059326,
+      "gradient_error": 6.0370311416591e-08,
+      "log_likelihood": -17730.283763233572,
+      "accuracy": 0.6228125,
+      "same_shared": 0.7717370390892029,
+      "same_opposing": 0.6790802478790283,
+      "diff_shared": 0.7321834564208984,
+      "diff_opposing": 0.7169820666313171,
+      "obs_shared": 0.9093061089515686,
+      "obs_opposing": 0.2924182713031769
+    },
+    "mean_conversation_obs": 1.884375
+  }
+}
