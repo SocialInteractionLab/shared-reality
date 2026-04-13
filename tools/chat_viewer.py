@@ -10,6 +10,7 @@ import tkinter as tk
 from tkinter import ttk
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 DATA_DIR = Path(__file__).parent.parent / "data"
@@ -222,8 +223,10 @@ class ChatViewer:
         self.commonality_var = tk.StringVar(value="any")
         self.max_error_var = tk.IntVar(value=4)  # max prediction error threshold
         self.error_filter_var = tk.StringVar(value="off")  # off / at_most / at_least
+        self.error_scope_var = tk.StringVar(value="any")  # any / both
         self.distance_val_var = tk.IntVar(value=4)
         self.distance_filter_var = tk.StringVar(value="off")
+        self.distance_scope_var = tk.StringVar(value="any")  # any / both
         self.domain_var = tk.StringVar(value="All")
         self.question_var = tk.StringVar(value="All")
         self.stance_revealed_var = tk.StringVar(value="any")
@@ -238,7 +241,7 @@ class ChatViewer:
         })
 
         self.root.title("Chat Transcript Viewer")
-        self.root.geometry("950x1080")
+        self.root.geometry("950x1300")
         self.root.configure(bg=BG)
 
         # Dark theme style
@@ -310,6 +313,14 @@ class ChatViewer:
         self._show_current()
 
     def _build_ui(self):
+        import matplotlib
+        matplotlib.use("TkAgg")
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+        from matplotlib.figure import Figure
+        # Store for use in _update_barplot
+        self._FigureCanvasTkAgg = FigureCanvasTkAgg
+        self._Figure = Figure
+
         # ── Filter panel ──
         filter_frame = ttk.LabelFrame(self.root, text="Filters", padding=8)
         filter_frame.pack(fill="x", padx=10, pady=(10, 2))
@@ -393,13 +404,24 @@ class ChatViewer:
             highlightbackground=BG,
             troughcolor="#333333",
             font=FONT_SM,
-            length=150,
+            length=100,
             showvalue=False,
             command=self._on_error_scale,
         )
         self.error_scale.set(0)
         self.error_scale.pack(side="left", padx=(10, 4))
         self.error_val_label.pack(side="left")
+
+        self.error_scope_buttons: dict[str, ttk.Button] = {}
+        for mode, label in [("any", "Either"), ("both", "Both")]:
+            btn = ttk.Button(
+                row3,
+                text=label,
+                command=lambda m=mode: self._set_toggle("error_scope", m),
+                style="ToggleActive.TButton" if mode == "any" else "Toggle.TButton",
+            )
+            btn.pack(side="left", padx=2)
+            self.error_scope_buttons[mode] = btn
 
         # Row 4: Perceived distance filter
         row4 = ttk.Frame(filter_frame)
@@ -436,13 +458,24 @@ class ChatViewer:
             highlightbackground=BG,
             troughcolor="#333333",
             font=FONT_SM,
-            length=150,
+            length=100,
             showvalue=False,
             command=self._on_distance_scale,
         )
         self.distance_scale.set(0)
         self.distance_scale.pack(side="left", padx=(10, 4))
         self.distance_val_label.pack(side="left")
+
+        self.distance_scope_buttons: dict[str, ttk.Button] = {}
+        for mode, label in [("any", "Either"), ("both", "Both")]:
+            btn = ttk.Button(
+                row4,
+                text=label,
+                command=lambda m=mode: self._set_toggle("distance_scope", m),
+                style="ToggleActive.TButton" if mode == "any" else "Toggle.TButton",
+            )
+            btn.pack(side="left", padx=2)
+            self.distance_scope_buttons[mode] = btn
 
         # Row 5: Stance revealed filter (LLM)
         row5 = ttk.Frame(filter_frame)
@@ -563,6 +596,17 @@ class ChatViewer:
         self.participant_frame = ttk.Frame(info_frame)
         self.participant_frame.pack(fill="x", pady=(5, 0))
 
+        # ── Behavioral data barplot ──
+        plot_frame = ttk.LabelFrame(self.root, text="Behavioral Data", padding=5)
+        plot_frame.pack(fill="x", padx=10, pady=5)
+
+        self.fig = self._Figure(figsize=(9, 2.2), dpi=100, facecolor=BG)
+        self.ax = self.fig.add_subplot(111)
+        self._style_ax()
+
+        self.canvas = self._FigureCanvasTkAgg(self.fig, master=plot_frame)
+        self.canvas.get_tk_widget().pack(fill="x")
+
         # ── Chat transcript ──
         chat_frame = ttk.LabelFrame(self.root, text="Conversation", padding=10)
         chat_frame.pack(fill="both", expand=True, padx=10, pady=5)
@@ -604,9 +648,15 @@ class ChatViewer:
         elif group == "error_filter":
             self.error_filter_var.set(value)
             buttons = self.error_buttons
+        elif group == "error_scope":
+            self.error_scope_var.set(value)
+            buttons = self.error_scope_buttons
         elif group == "distance_filter":
             self.distance_filter_var.set(value)
             buttons = self.distance_buttons
+        elif group == "distance_scope":
+            self.distance_scope_var.set(value)
+            buttons = self.distance_scope_buttons
         elif group == "stance_revealed":
             self.stance_revealed_var.set(value)
             buttons = self.revealed_buttons
@@ -667,8 +717,10 @@ class ChatViewer:
         commonality = self.commonality_var.get()
         error_mode = self.error_filter_var.get()
         error_thresh = self.max_error_var.get()
+        error_scope = self.error_scope_var.get()
         dist_mode = self.distance_filter_var.get()
         dist_thresh = self.distance_val_var.get()
+        dist_scope = self.distance_scope_var.get()
         domain = self.domain_var.get()
         question = self.question_var.get()
         revealed_mode = self.stance_revealed_var.get()
@@ -698,7 +750,7 @@ class ChatViewer:
             if commonality == "neither" and d["commonality_count"] != 0:
                 continue
 
-            # Prediction error filter (at least one participant matches)
+            # Prediction error filter
             if error_mode != "off":
                 errors = [
                     p["prediction_error"]
@@ -707,12 +759,13 @@ class ChatViewer:
                 ]
                 if not errors:
                     continue
-                if error_mode == "at_most" and not any(e <= error_thresh for e in errors):
+                check = all if error_scope == "both" else any
+                if error_mode == "at_most" and not check(e <= error_thresh for e in errors):
                     continue
-                if error_mode == "at_least" and not any(e >= error_thresh for e in errors):
+                if error_mode == "at_least" and not check(e >= error_thresh for e in errors):
                     continue
 
-            # Perceived distance filter (at least one participant matches)
+            # Perceived distance filter
             if dist_mode != "off":
                 distances = [
                     p["perceived_distance"]
@@ -721,9 +774,10 @@ class ChatViewer:
                 ]
                 if not distances:
                     continue
-                if dist_mode == "at_most" and not any(x <= dist_thresh for x in distances):
+                check = all if dist_scope == "both" else any
+                if dist_mode == "at_most" and not check(x <= dist_thresh for x in distances):
                     continue
-                if dist_mode == "at_least" and not any(x >= dist_thresh for x in distances):
+                if dist_mode == "at_least" and not check(x >= dist_thresh for x in distances):
                     continue
 
             # Stance revealed filter (LLM annotation)
@@ -747,6 +801,122 @@ class ChatViewer:
         self.match_label.config(
             text=f"{len(filtered)} dyads match filters"
         )
+        self._update_barplot()
+
+    def _style_ax(self):
+        """Apply dark theme to the matplotlib axes."""
+        self.ax.set_facecolor(BG)
+        for spine in self.ax.spines.values():
+            spine.set_color(FG)
+        self.ax.tick_params(colors=FG, labelsize=9)
+        self.ax.xaxis.label.set_color(FG)
+        self.ax.yaxis.label.set_color(FG)
+        self.ax.title.set_color(FG)
+
+    def _update_barplot(self):
+        """Redraw the generalization gradient barplot for filtered dyads."""
+        self.ax.cla()
+        self._style_ax()
+
+        if not self.filtered_groups:
+            self.ax.text(
+                0.5, 0.5, "No dyads match filters",
+                ha="center", va="center", color=DIM, fontsize=12,
+                transform=self.ax.transAxes,
+            )
+            self.ax.set_xticks([])
+            self.ax.set_yticks([])
+            self.canvas.draw_idle()
+            return
+
+        filtered_set = set(self.filtered_groups)
+        sub = self.chat[self.chat["groupId"].isin(filtered_set)]
+
+        # Build CG lookup for grouped mode
+        cg_lookup = {
+            d["group_id"]: d["post_stance_cg"]
+            for d in self.all_dyads
+            if d["group_id"] in filtered_set
+        }
+
+        qt_order = ["observed", "same_domain", "different_domain"]
+        qt_labels = ["Focal Topic", "Same Domain", "Diff. Domain"]
+        x = np.arange(len(qt_order))
+
+        llm_cg_mode = self.llm_cg_var.get()
+        grouped = llm_cg_mode == "any"
+
+        if grouped:
+            # Split by CG found vs not
+            groups = [
+                ("No CG", False, "#b0c6ff"),
+                ("Found CG", True, "#1757fe"),
+            ]
+            bar_w = 0.35
+            for si, (label, cg_val, color) in enumerate(groups):
+                gids = [g for g in self.filtered_groups if cg_lookup.get(g) == cg_val]
+                gid_set = set(gids)
+                n_dyads = len(gids)
+                group_sub = sub[sub["groupId"].isin(gid_set)]
+
+                means, sems = [], []
+                for qt in qt_order:
+                    qt_data = group_sub[group_sub["question_type"] == qt]["predictShared"].dropna()
+                    if len(qt_data) > 0:
+                        means.append(qt_data.mean() * 100)
+                        sems.append(qt_data.sem() * 100)
+                    else:
+                        means.append(0)
+                        sems.append(0)
+
+                offset = -bar_w / 2 if si == 0 else bar_w / 2
+                self.ax.bar(
+                    x + offset, means, bar_w,
+                    color=color, edgecolor=BG,
+                    label=f"{label} (n={n_dyads})",
+                )
+                self.ax.errorbar(
+                    x + offset, means, yerr=sems,
+                    fmt="none", ecolor=FG, capsize=3, linewidth=1,
+                )
+        else:
+            # Single aggregate bars
+            n_dyads = len(self.filtered_groups)
+            bar_w = 0.5
+            means, sems = [], []
+            for qt in qt_order:
+                qt_data = sub[sub["question_type"] == qt]["predictShared"].dropna()
+                if len(qt_data) > 0:
+                    means.append(qt_data.mean() * 100)
+                    sems.append(qt_data.sem() * 100)
+                else:
+                    means.append(0)
+                    sems.append(0)
+
+            color = "#1757fe" if llm_cg_mode == "yes" else "#b0c6ff"
+            self.ax.bar(
+                x, means, bar_w,
+                color=color, edgecolor=BG,
+                label=f"n={n_dyads} dyads",
+            )
+            self.ax.errorbar(
+                x, means, yerr=sems,
+                fmt="none", ecolor=FG, capsize=3, linewidth=1,
+            )
+
+        self.ax.set_xticks(x)
+        self.ax.set_xticklabels(qt_labels, fontsize=10, color=FG)
+        self.ax.set_ylabel("% Expected\nCommonality", fontsize=10, color=FG)
+        self.ax.set_ylim(0, 100)
+        self.ax.set_yticks([0, 25, 50, 75, 100])
+        self.ax.legend(
+            fontsize=8, facecolor=BG, edgecolor=DIM,
+            labelcolor=FG, loc="upper right",
+        )
+        self.ax.spines["top"].set_visible(False)
+        self.ax.spines["right"].set_visible(False)
+        self.fig.tight_layout(pad=1.0)
+        self.canvas.draw_idle()
 
     def _show_current(self):
         if not self.filtered_groups:
@@ -860,7 +1030,7 @@ class ChatViewer:
                 highlightthickness=0,
                 padx=4,
                 pady=2,
-                height=7,
+                height=8,
                 width=40,
                 cursor="arrow",
             )
@@ -872,7 +1042,8 @@ class ChatViewer:
             card.tag_configure("err", foreground=err_color, font=FONT_SM)
             card.tag_configure("commonality", foreground=commonality_color, font=("Helvetica Neue", 13, "bold"))
 
-            card.insert("end", f"{emoji} {p['pid']}\n", "header")
+            card.insert("end", f"{emoji}\n", "header")
+            card.insert("end", f"{p['pid']}\n", "header")
             card.insert("end", f"Self: {self_resp} ({p['self_response']})\n")
             card.insert("end", f"Partner true: {partner_true} ({p['partner_true']})\n", "dim")
             card.insert("end", f"Perceived partner: {perceived} ({p['perceived_partner']})\n")
