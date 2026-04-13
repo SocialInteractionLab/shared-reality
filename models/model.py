@@ -140,7 +140,8 @@ def _predict_match_probs(
 
 @jit
 def _predict_bayesian(
-    obs_q, r_obs, r_self, loadings, means, prior_cov, obs_variance, threshold
+    obs_q, r_obs, r_self, loadings, means, prior_cov, obs_variance, threshold,
+    anchor_weight,
 ):
     """
     Bayesian factor model prediction for a single participant.
@@ -149,10 +150,15 @@ def _predict_bayesian(
         Appropriate for no-chat condition where participants see explicit responses.
     When obs_variance>0: Uses Gaussian observation model.
         Appropriate for chat condition where responses are inferred from conversation.
+
+    When anchor_weight>0: Prior mean is anchored to self's position in factor space
+        (Epley & Gilovich 2006; Tamir & Mitchell 2010). anchor_weight=0 recovers
+        the zero-centered prior; anchor_weight=1 is full self-anchoring.
     """
     L_obs = loadings[obs_q]
     mu_obs = means[obs_q]
-    prior_mean = jnp.zeros(loadings.shape[1])
+    theta_self = _project_to_factors(r_self, loadings, means)
+    prior_mean = anchor_weight * theta_self
 
     # Choose update based on obs_variance
     post_mean, post_cov = jax.lax.cond(
@@ -240,10 +246,12 @@ def _predict_single(
     lambda_mix,
     base_rate,
     projection_weight,
+    anchor_weight,
 ):
     """Combined prediction: (1-λ) × Bayesian + λ × SimilarityProjection."""
     p_bayes = _predict_bayesian(
-        obs_q, r_obs, r_self, loadings, means, prior_cov, obs_variance, threshold
+        obs_q, r_obs, r_self, loadings, means, prior_cov, obs_variance, threshold,
+        anchor_weight,
     )
     p_proj = _predict_similarity_projection(
         obs_q, r_obs, r_self, base_rate, projection_weight, threshold
@@ -265,6 +273,7 @@ def _predict_batch(
     lambda_mix,
     base_rate,
     projection_weight,
+    anchor_weight,
 ):
     """Batch prediction over participants using vmap."""
     return vmap(
@@ -280,6 +289,7 @@ def _predict_batch(
             lambda_mix,
             base_rate,
             projection_weight,
+            anchor_weight,
         )
     )(obs_qs, r_partners, r_selves)
 
@@ -359,6 +369,11 @@ class CommonalityModel:
         Base P(match) for similarity projection when perceived similarity = 0
     projection_weight : float
         How much perceived similarity boosts P(match) in similarity projection
+    anchor_weight : float
+        α ∈ [0,1] controlling self-anchoring of the Bayesian prior.
+        0 = zero-centered prior (default), 1 = full self-anchoring.
+        When α>0, the prior mean is set to α·θ_self where θ_self is
+        the participant's own position in factor space.
     loadings : np.ndarray, optional
         Custom factor loadings (35 x k). If None, computed from data.
     question_means : np.ndarray, optional
@@ -375,12 +390,14 @@ class CommonalityModel:
         epsilon: float = 0.2,
         base_rate: float = 0.3,
         projection_weight: float = 0.4,
+        anchor_weight: float = 0.0,  # 0 = zero prior (default), 1 = full self-anchoring
         loadings: Optional[np.ndarray] = None,
         question_means: Optional[np.ndarray] = None,
     ):
         self.k = k
         self.lambda_mix = np.clip(lambda_mix, 0.0, 1.0)
         self.epsilon = np.clip(epsilon, 0.0, 1.0)
+        self.anchor_weight = np.clip(anchor_weight, 0.0, 1.0)
         self.base_rate = base_rate
         self.projection_weight = projection_weight
 
@@ -404,6 +421,7 @@ class CommonalityModel:
         self._lambda_mix = jnp.array(self.lambda_mix)
         self._base_rate = jnp.array(base_rate)
         self._projection_weight = jnp.array(projection_weight)
+        self._anchor_weight = jnp.array(self.anchor_weight)
 
     def predict(self, obs_q: int, r_partner: float, r_self: np.ndarray) -> np.ndarray:
         """
@@ -429,6 +447,7 @@ class CommonalityModel:
             self._lambda_mix,
             self._base_rate,
             self._projection_weight,
+            self._anchor_weight,
         )
         # Apply lapse rate
         preds = (1 - self.epsilon) * preds + self.epsilon * 0.5
@@ -460,17 +479,19 @@ class CommonalityModel:
             self._lambda_mix,
             self._base_rate,
             self._projection_weight,
+            self._anchor_weight,
         )
         # Apply lapse rate
         preds = (1 - self.epsilon) * preds + self.epsilon * 0.5
         return np.asarray(preds)
 
     def __repr__(self):
+        anchor_str = f", α={self.anchor_weight:.2f}" if self.anchor_weight > 0 else ""
         if self.lambda_mix == 0:
-            return f"CommonalityModel(k={self.k}, Bayesian)"
+            return f"CommonalityModel(k={self.k}, Bayesian{anchor_str})"
         elif self.lambda_mix == 1:
-            return f"CommonalityModel(SimilarityProjection)"
-        return f"CommonalityModel(k={self.k}, λ={self.lambda_mix:.2f})"
+            return f"CommonalityModel(SimilarityProjection{anchor_str})"
+        return f"CommonalityModel(k={self.k}, λ={self.lambda_mix:.2f}{anchor_str})"
 
 
 # =============================================================================
