@@ -23,6 +23,7 @@ import jax.numpy as jnp
 from jax.scipy.stats import norm as jax_norm
 
 from models.model import (
+    _posterior_update_delta,
     _posterior_update_gaussian,
     _project_to_factors,
     load_factor_loadings,
@@ -30,6 +31,15 @@ from models.model import (
     DOMAIN_RANGES,
     N_QUESTIONS,
 )
+
+
+def _do_update(L_obs, r_obs, mu_obs, prior_mean, prior_cov, sigma_obs: float):
+    """Dispatch to delta or Gaussian update based on sigma_obs."""
+    if sigma_obs < 1e-8:
+        return _posterior_update_delta(L_obs, r_obs, mu_obs, prior_mean, prior_cov)
+    return _posterior_update_gaussian(
+        L_obs, r_obs, mu_obs, prior_mean, prior_cov, jnp.array(sigma_obs**2),
+    )
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 
@@ -315,6 +325,294 @@ def evaluate_conversation_model_separated(
     ]
 
     return result
+
+
+def predict_responses_single_obs(
+    focal_question: int,
+    focal_r_obs: float,
+    loadings: np.ndarray,
+    means: np.ndarray,
+    sigma_prior: float,
+    sigma_obs: float,
+) -> np.ndarray:
+    """
+    Predict partner's expected response (1-5) on all questions from a single observation.
+
+    Returns (35,) array of E[r_partner_q | r_obs].
+    """
+    k = loadings.shape[1]
+    loadings_j = jnp.array(loadings)
+    means_j = jnp.array(means)
+
+    prior_mean = jnp.zeros(k)
+    prior_cov = jnp.array(sigma_prior**2 * np.eye(k))
+
+    L_focal = loadings_j[focal_question]
+    mu_focal = means_j[focal_question]
+    post_mean, _ = _do_update(
+        L_focal, focal_r_obs, mu_focal, prior_mean, prior_cov, sigma_obs,
+    )
+
+    pred_means = loadings_j @ post_mean + means_j
+    return np.asarray(pred_means)
+
+
+def predict_responses_separated(
+    obs_plan: list[dict],
+    r_self: np.ndarray,
+    focal_question: int,
+    focal_r_obs: float,
+    loadings: np.ndarray,
+    means: np.ndarray,
+    sigma_prior: float,
+    sigma_focal: float,
+    sigma_conv: float,
+) -> np.ndarray:
+    """
+    Predict partner's expected response (1-5) on all questions from conversation model.
+
+    Returns (35,) array of E[r_partner_q | all observations].
+    """
+    k = loadings.shape[1]
+    loadings_j = jnp.array(loadings)
+    means_j = jnp.array(means)
+    r_self_j = jnp.array(r_self)
+
+    prior_mean = jnp.zeros(k)
+    prior_cov = jnp.array(sigma_prior**2 * np.eye(k))
+
+    # Focal observation
+    L_focal = loadings_j[focal_question]
+    mu_focal = means_j[focal_question]
+    post_mean, post_cov = _posterior_update_gaussian(
+        L_focal, focal_r_obs, mu_focal, prior_mean, prior_cov,
+        jnp.array(sigma_focal**2),
+    )
+
+    # Conversation observations
+    conv_variance = jnp.array(sigma_conv**2)
+    for obs in obs_plan:
+        q_idx = obs["question_idx"]
+        L_obs = loadings_j[q_idx]
+        mu_obs = means_j[q_idx]
+        r_obs = r_self_j[q_idx] if obs["shared_reality"] else mu_obs
+        post_mean, post_cov = _posterior_update_gaussian(
+            L_obs, r_obs, mu_obs, post_mean, post_cov, conv_variance,
+        )
+
+    pred_means = loadings_j @ post_mean + means_j
+    return np.asarray(pred_means)
+
+
+def predict_responses_self_anchored(
+    focal_question: int,
+    focal_r_obs: float,
+    r_self: np.ndarray,
+    loadings: np.ndarray,
+    means: np.ndarray,
+    sigma_prior: float,
+    sigma_obs: float,
+    anchor_weight: float = 1.0,
+) -> np.ndarray:
+    """
+    Predict partner's expected response with self-anchored prior (α > 0).
+
+    Returns (35,) array of E[r_partner_q | r_obs, prior=α·θ_self].
+    """
+    k = loadings.shape[1]
+    loadings_j = jnp.array(loadings)
+    means_j = jnp.array(means)
+    r_self_j = jnp.array(r_self)
+
+    theta_self = _project_to_factors(r_self_j, loadings_j, means_j)
+    prior_mean = anchor_weight * theta_self
+    prior_cov = jnp.array(sigma_prior**2 * np.eye(k))
+
+    L_focal = loadings_j[focal_question]
+    mu_focal = means_j[focal_question]
+    post_mean, _ = _do_update(
+        L_focal, focal_r_obs, mu_focal, prior_mean, prior_cov, sigma_obs,
+    )
+
+    pred_means = loadings_j @ post_mean + means_j
+    return np.asarray(pred_means)
+
+
+def predict_responses_similarity_projection(
+    focal_question: int,
+    focal_r_obs: float,
+    r_self: np.ndarray,
+    threshold: float,
+    base_rate: float = 0.3,
+    projection_weight: float = 0.4,
+) -> np.ndarray:
+    """
+    Predict partner's expected response using the similarity projection model.
+
+    The similarity projection model predicts P(match), not a continuous response.
+    To get a predicted response, we use the weighted interpolation:
+        pred_response[q] = p_match * r_self[q] + (1 - p_match) * (6 - r_self[q])
+
+    Where (6 - r_self) is the "opposite" on a 1-5 scale (1↔5, 2↔4, 3↔3).
+    When p_match is high, predict partner ≈ self. When low, predict opposite.
+
+    Returns (35,) array of predicted partner responses.
+    """
+    r_self_obs = r_self[focal_question]
+
+    # Global perceived similarity
+    obs_diff = np.abs(focal_r_obs - r_self_obs)
+    perceived_similarity = np.exp(-obs_diff / threshold)
+
+    # Local self-response similarity
+    self_diff = np.abs(r_self - r_self_obs)
+    self_similarity = np.exp(-self_diff / threshold)
+
+    # P(match) per question
+    p_match = np.clip(
+        base_rate + perceived_similarity * self_similarity * projection_weight,
+        0.01, 0.99,
+    )
+
+    # Convert P(match) to predicted response:
+    # high p_match → predict self, low p_match → predict opposite of self
+    opposite = 6.0 - r_self  # mirror on 1-5 scale
+    pred_responses = p_match * r_self + (1 - p_match) * opposite
+
+    return pred_responses
+
+
+def predict_responses_exemplar(
+    focal_question: int,
+    focal_r_obs: float,
+    all_responses: np.ndarray,
+    bandwidth: float = 1.0,
+) -> np.ndarray:
+    """
+    Non-parametric conditional prediction: E[r_q | r_focal = focal_r_obs].
+
+    Computes a kernel-weighted mean of all participants' responses,
+    weighted by how close their response on the focal question is
+    to the observed value. Uses a Gaussian kernel.
+
+    Args:
+        focal_question: 0-indexed focal question
+        focal_r_obs: observed response on focal question
+        all_responses: (N, 35) matrix of all participants' responses
+        bandwidth: kernel bandwidth (σ for Gaussian kernel)
+
+    Returns:
+        (35,) array of conditional mean responses
+    """
+    focal_responses = all_responses[:, focal_question]
+
+    # Gaussian kernel weights: how similar is each person's focal response?
+    weights = np.exp(-0.5 * ((focal_responses - focal_r_obs) / bandwidth) ** 2)
+    weights /= weights.sum() + 1e-10
+
+    # Weighted mean of all responses
+    pred_means = weights @ all_responses
+    return pred_means
+
+
+def predict_responses_self_template(
+    focal_question: int,
+    focal_r_obs: float,
+    r_self: np.ndarray,
+    means: np.ndarray,
+    scale: float = 1.0,
+    gamma: float = 1.0,
+) -> np.ndarray:
+    """
+    Self-template projection gated by perceived agreement on focal question.
+
+    When partner agrees with self on focal: predict partner mirrors self's
+    deviation pattern from population mean. When partner disagrees: predict
+    partner ≈ population mean.
+
+    pred_partner_q = μ_q + agreement × γ × (r_self_q - μ_q)
+    where agreement = exp(-|r_obs - r_self_focal| / scale)
+
+    Captures false-consensus-modulated-by-extremity: extreme self-responders
+    project more strongly on agreement.
+
+    Args:
+        focal_question: 0-indexed focal question
+        focal_r_obs: partner's observed response on focal
+        r_self: self's responses (35,)
+        means: population means (35,)
+        scale: bandwidth for agreement gate (smaller = stricter)
+        gamma: max projection strength of self deviation (0-1 typical)
+
+    Returns:
+        (35,) array of predicted partner responses
+    """
+    r_self_focal = r_self[focal_question]
+    agreement = np.exp(-np.abs(focal_r_obs - r_self_focal) / scale)
+    self_deviation = r_self - means
+    pred = means + agreement * gamma * self_deviation
+    return pred
+
+
+def predict_match_self_template(
+    focal_question: int,
+    focal_r_obs: float,
+    r_self: np.ndarray,
+    means: np.ndarray,
+    threshold: float,
+    scale: float = 1.0,
+    gamma: float = 1.0,
+    pred_sigma: float = 1.0,
+    epsilon: float = 0.1,
+) -> np.ndarray:
+    """
+    P(match) for self-template projection model.
+
+    Computes P(|r_partner - r_self| ≤ τ) using the self-template predicted mean
+    and a fixed predictive σ.
+    """
+    from scipy.stats import norm
+    pred_means = predict_responses_self_template(
+        focal_question, focal_r_obs, r_self, means, scale, gamma,
+    )
+    upper = (r_self + threshold - pred_means) / pred_sigma
+    lower = (r_self - threshold - pred_means) / pred_sigma
+    p_match = norm.cdf(upper) - norm.cdf(lower)
+    p_match = (1 - epsilon) * p_match + epsilon * 0.5
+    return np.clip(p_match, 0.01, 0.99)
+
+
+def predict_match_exemplar(
+    focal_question: int,
+    focal_r_obs: float,
+    r_self: np.ndarray,
+    all_responses: np.ndarray,
+    threshold: float,
+    bandwidth: float = 1.0,
+    epsilon: float = 0.1,
+) -> np.ndarray:
+    """
+    Non-parametric P(match) prediction: kernel-weighted match proportion.
+
+    For each question q, computes the weighted proportion of population
+    members whose response on q is within threshold of r_self[q],
+    weighted by how close their focal question response is to the observation.
+
+    Returns (35,) array of P(match) per question.
+    """
+    focal_responses = all_responses[:, focal_question]
+
+    # Gaussian kernel weights
+    weights = np.exp(-0.5 * ((focal_responses - focal_r_obs) / bandwidth) ** 2)
+    weights /= weights.sum() + 1e-10
+
+    # For each question, weighted proportion of matches
+    match_matrix = np.abs(all_responses - r_self[np.newaxis, :]) <= threshold  # (N, 35)
+    p_match = weights @ match_matrix.astype(float)  # (35,)
+
+    # Apply lapse rate
+    p_match = (1 - epsilon) * p_match + epsilon * 0.5
+    return np.clip(p_match, 0.01, 0.99)
 
 
 def prepare_chat_eval_data(

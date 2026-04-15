@@ -68,5 +68,6 @@
       "obs_opposing": 0.2924182713031769
     },
     "mean_conversation_obs": 1.884375
-  }
+  },
+  "response_level": {}
 }
