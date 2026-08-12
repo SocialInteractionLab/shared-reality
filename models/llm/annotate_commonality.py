@@ -50,14 +50,62 @@ MAX_CONVERSATION_SECONDS = 195
 DEFAULT_BIN_SECONDS = 15
 
 
-def tc_experiment_name(bin_seconds: int) -> str:
+def _robustness_suffix(temperature: Optional[float], thinking_level: Optional[str]) -> str:
+    """Build a suffix encoding non-default robustness settings.
+
+    Returns empty string when both args are None (the primary run).
+    Otherwise returns e.g. "_T0.5_TLlow" so robustness sweeps land in
+    separate experiment names / GCS paths / batch-id files.
+    """
+    parts = []
+    if temperature is not None:
+        parts.append(f"T{temperature}")
+    if thinking_level is not None:
+        parts.append(f"TL{thinking_level}")
+    return ("_" + "_".join(parts)) if parts else ""
+
+
+def tc_experiment_name(
+    bin_seconds: int,
+    temperature: Optional[float] = None,
+    thinking_level: Optional[str] = None,
+) -> str:
     """Experiment name with bin size suffix, e.g. commonality_timecourse_15s."""
-    return f"{TC_EXPERIMENT_BASE}_{bin_seconds}s"
+    return f"{TC_EXPERIMENT_BASE}_{bin_seconds}s{_robustness_suffix(temperature, thinking_level)}"
 
 
-def perbin_tc_experiment_name(bin_seconds: int) -> str:
+def perbin_tc_experiment_name(
+    bin_seconds: int,
+    temperature: Optional[float] = None,
+    thinking_level: Optional[str] = None,
+) -> str:
     """Experiment name for per-bin variant, e.g. perbin_commonality_timecourse_15s."""
-    return f"{PERBIN_TC_EXPERIMENT_BASE}_{bin_seconds}s"
+    return f"{PERBIN_TC_EXPERIMENT_BASE}_{bin_seconds}s{_robustness_suffix(temperature, thinking_level)}"
+
+
+def full_experiment_name(
+    temperature: Optional[float] = None,
+    thinking_level: Optional[str] = None,
+) -> str:
+    """Experiment name for full-conversation mode (with optional robustness suffix)."""
+    return f"{EXPERIMENT_NAME}{_robustness_suffix(temperature, thinking_level)}"
+
+
+def _build_gen_config(
+    temperature: Optional[float] = None,
+    thinking_level: Optional[str] = None,
+) -> dict:
+    """Build a generationConfig dict, applying overrides on top of MODEL_CONFIG."""
+    temp = MODEL_CONFIG["temperature"] if temperature is None else temperature
+    gen_config = {
+        "temperature": temp,
+        "maxOutputTokens": MODEL_CONFIG["max_tokens"],
+        "responseMimeType": "application/json",
+    }
+    tl = thinking_level if thinking_level is not None else MODEL_CONFIG.get("thinking_level")
+    if tl is not None:
+        gen_config["thinkingConfig"] = {"thinkingLevel": tl}
+    return gen_config
 
 
 def build_full_conversation(messages_df: pd.DataFrame, group_id: str) -> str:
@@ -367,14 +415,30 @@ def get_chat_groups() -> pd.DataFrame:
     return groups
 
 
-def create_batch_requests(sample: Optional[int] = None) -> List[dict]:
-    """Create batch requests for all chat dyads."""
+def create_batch_requests(
+    sample: Optional[int] = None,
+    n_runs: int = 1,
+    temperature: Optional[float] = None,
+    thinking_level: Optional[str] = None,
+    subset_ids: Optional[List[str]] = None,
+) -> List[dict]:
+    """Create batch requests for all chat dyads.
+
+    Args:
+        sample: Only process first N groups
+        n_runs: Number of duplicate runs per dyad (custom_id gets _r{run} suffix when >1)
+        temperature: Override MODEL_CONFIG temperature (None = use config default)
+        thinking_level: Override MODEL_CONFIG thinking_level (None = use config default)
+        subset_ids: If provided, only annotate these groupIds (for cheap robustness sweeps)
+    """
     messages = pd.read_csv(DATA_DIR / "messages.csv")
     messages["absolute_timestamp"] = pd.to_datetime(
         messages["absolute_timestamp"], format="mixed"
     )
     groups = get_chat_groups()
 
+    if subset_ids is not None:
+        groups = groups[groups["groupId"].isin(subset_ids)]
     if sample:
         groups = groups.head(sample)
 
@@ -394,37 +458,44 @@ def create_batch_requests(sample: Optional[int] = None) -> List[dict]:
             focal_domain=row["matchedDomain"],
         )
 
-        gen_config = {
-            "temperature": MODEL_CONFIG["temperature"],
-            "maxOutputTokens": MODEL_CONFIG["max_tokens"],
-            "responseMimeType": "application/json",
-        }
-        if "thinking_level" in MODEL_CONFIG:
-            gen_config["thinkingConfig"] = {
-                "thinkingLevel": MODEL_CONFIG["thinking_level"],
+        gen_config = _build_gen_config(temperature, thinking_level)
+
+        for run in range(n_runs):
+            custom_id = f"cg_{group_id}"
+            if n_runs > 1:
+                custom_id += f"_r{run}"
+
+            request = {
+                "custom_id": custom_id,
+                "request": {
+                    "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                    "generationConfig": gen_config,
+                },
             }
+            batch_requests.append(request)
 
-        request = {
-            "custom_id": f"cg_{group_id}",
-            "request": {
-                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                "generationConfig": gen_config,
-            },
-        }
-        batch_requests.append(request)
-
+    if n_runs > 1:
+        print(f"  ({n_runs} runs per dyad, {len(batch_requests)} total requests)")
     return batch_requests
 
 
 def create_timecourse_batch_requests(
     sample: Optional[int] = None,
     bin_seconds: int = DEFAULT_BIN_SECONDS,
+    n_runs: int = 1,
+    temperature: Optional[float] = None,
+    thinking_level: Optional[str] = None,
+    subset_ids: Optional[List[str]] = None,
 ) -> List[dict]:
     """Create batch requests for common ground timecourse (all dyads × time bins).
 
     Args:
         sample: Only process first N groups
         bin_seconds: Size of each time bin in seconds
+        n_runs: Number of duplicate runs per (dyad, bin)
+        temperature: Override MODEL_CONFIG temperature
+        thinking_level: Override MODEL_CONFIG thinking_level
+        subset_ids: Restrict to these groupIds
     """
     max_bins = MAX_CONVERSATION_SECONDS // bin_seconds
     messages = pd.read_csv(DATA_DIR / "messages.csv")
@@ -434,6 +505,8 @@ def create_timecourse_batch_requests(
     messages["start_time"] = pd.to_datetime(messages["start_time"], format="mixed")
     groups = get_chat_groups()
 
+    if subset_ids is not None:
+        groups = groups[groups["groupId"].isin(subset_ids)]
     if sample:
         groups = groups.head(sample)
 
@@ -468,25 +541,24 @@ def create_timecourse_batch_requests(
                 time_seconds=time_seconds,
             )
 
-            gen_config = {
-                "temperature": MODEL_CONFIG["temperature"],
-                "maxOutputTokens": MODEL_CONFIG["max_tokens"],
-                "responseMimeType": "application/json",
-            }
-            if "thinking_level" in MODEL_CONFIG:
-                gen_config["thinkingConfig"] = {
-                    "thinkingLevel": MODEL_CONFIG["thinking_level"],
+            gen_config = _build_gen_config(temperature, thinking_level)
+
+            for run in range(n_runs):
+                custom_id = f"cgtc_{group_id}_t{t}"
+                if n_runs > 1:
+                    custom_id += f"_r{run}"
+
+                request = {
+                    "custom_id": custom_id,
+                    "request": {
+                        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                        "generationConfig": gen_config,
+                    },
                 }
+                batch_requests.append(request)
 
-            request = {
-                "custom_id": f"cgtc_{group_id}_t{t}",
-                "request": {
-                    "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                    "generationConfig": gen_config,
-                },
-            }
-            batch_requests.append(request)
-
+    if n_runs > 1:
+        print(f"  ({n_runs} runs per bin, {len(batch_requests)} total requests)")
     return batch_requests
 
 
@@ -685,6 +757,9 @@ def create_perbin_timecourse_batch_requests(
     sample: Optional[int] = None,
     bin_seconds: int = DEFAULT_BIN_SECONDS,
     n_runs: int = 1,
+    temperature: Optional[float] = None,
+    thinking_level: Optional[str] = None,
+    subset_ids: Optional[List[str]] = None,
 ) -> List[dict]:
     """Create batch requests for per-bin annotation (hybrid: cumulative context, independent judgment).
 
@@ -698,6 +773,9 @@ def create_perbin_timecourse_batch_requests(
         n_runs: Number of duplicate runs per request (for reliability analysis).
             When > 1, each request is duplicated with custom_ids like
             {group_id}_t{bin}_r{run} (run = 0..n_runs-1).
+        temperature: Override MODEL_CONFIG temperature
+        thinking_level: Override MODEL_CONFIG thinking_level
+        subset_ids: Restrict to these groupIds
     """
     max_bins = MAX_CONVERSATION_SECONDS // bin_seconds
     messages = pd.read_csv(DATA_DIR / "messages.csv")
@@ -707,6 +785,8 @@ def create_perbin_timecourse_batch_requests(
     messages["start_time"] = pd.to_datetime(messages["start_time"], format="mixed")
     groups = get_chat_groups()
 
+    if subset_ids is not None:
+        groups = groups[groups["groupId"].isin(subset_ids)]
     if sample:
         groups = groups.head(sample)
 
@@ -754,15 +834,7 @@ def create_perbin_timecourse_batch_requests(
                 n_messages=n_messages,
             )
 
-            gen_config = {
-                "temperature": MODEL_CONFIG["temperature"],
-                "maxOutputTokens": MODEL_CONFIG["max_tokens"],
-                "responseMimeType": "application/json",
-            }
-            if "thinking_level" in MODEL_CONFIG:
-                gen_config["thinkingConfig"] = {
-                    "thinkingLevel": MODEL_CONFIG["thinking_level"],
-                }
+            gen_config = _build_gen_config(temperature, thinking_level)
 
             for run in range(n_runs):
                 custom_id = f"{group_id}_t{t}"
@@ -786,9 +858,11 @@ def create_perbin_timecourse_batch_requests(
 
 def download_and_parse_perbin_timecourse(
     bin_seconds: int = DEFAULT_BIN_SECONDS,
+    temperature: Optional[float] = None,
+    thinking_level: Optional[str] = None,
 ) -> pd.DataFrame:
     """Download and parse per-bin CG timecourse results into a DataFrame."""
-    experiment_name = perbin_tc_experiment_name(bin_seconds)
+    experiment_name = perbin_tc_experiment_name(bin_seconds, temperature, thinking_level)
     _, records = _download_raw(experiment_name)
 
     # Extract group_id, time_bin, and optional run from custom_id
@@ -1108,15 +1182,33 @@ def _download_raw(experiment_name: str) -> tuple[Path, List[dict]]:
     return raw_file, records
 
 
-def download_and_parse() -> pd.DataFrame:
-    """Download results and parse into a DataFrame (full-conversation annotation)."""
-    _, records = _download_raw(EXPERIMENT_NAME)
+def download_and_parse(
+    temperature: Optional[float] = None,
+    thinking_level: Optional[str] = None,
+) -> pd.DataFrame:
+    """Download results and parse into a DataFrame (full-conversation annotation).
 
-    # Extract group_id from custom_id
+    Handles single-run (custom_id = cg_{group_id}) and multi-run
+    (custom_id = cg_{group_id}_r{run}) formats.
+    """
+    import re
+
+    experiment_name = full_experiment_name(temperature, thinking_level)
+    _, records = _download_raw(experiment_name)
+
+    # Extract group_id and optional run from custom_id
     for rec in records:
-        rec["group_id"] = rec.pop("custom_id").replace("cg_", "")
+        custom_id = rec.pop("custom_id")
+        m = re.match(r"^cg_(.+)_r(\d+)$", custom_id)
+        if m:
+            rec["group_id"] = m.group(1)
+            rec["run"] = int(m.group(2))
+        else:
+            rec["group_id"] = custom_id.replace("cg_", "")
+            rec["run"] = 0
 
     df = pd.DataFrame(records)
+    has_multi_run = df["run"].nunique() > 1
 
     # Join with group metadata
     groups = get_chat_groups()
@@ -1126,9 +1218,42 @@ def download_and_parse() -> pd.DataFrame:
         how="left",
     )
 
-    output_file = RESULTS_DIR / f"{EXPERIMENT_NAME}.csv"
+    output_file = RESULTS_DIR / f"{experiment_name}.csv"
     df.to_csv(output_file, index=False)
     print(f"Saved to {output_file}")
+
+    if has_multi_run:
+        n_runs = df["run"].nunique()
+        reliability_axes = [
+            c for c in [
+                "initial_alignment",
+                "post_stance_shared_reality",
+                "topic_scope",
+                "inner_state_dimension",
+                "post_stance_differences",
+                "surprising",
+            ]
+            if c in df.columns
+        ]
+        if reliability_axes:
+            print(f"\n=== MULTI-RUN RELIABILITY ({n_runs} runs) ===")
+            for axis in reliability_axes:
+                axis_mode = (
+                    df.groupby("group_id")[axis]
+                    .agg(lambda x: x.mode().iloc[0])
+                    .reset_index()
+                    .rename(columns={axis: f"{axis}_majority"})
+                )
+                tmp = df.merge(axis_mode, on="group_id")
+                tmp["_agrees"] = tmp[axis] == tmp[f"{axis}_majority"]
+                item_agree = tmp.groupby("group_id")["_agrees"].sum().astype(int)
+                n_items = len(item_agree)
+                n_unanimous = (item_agree == n_runs).sum()
+                overall_rate = tmp["_agrees"].mean()
+                print(f"\n  {axis}:")
+                print(f"    Overall agreement rate: {overall_rate:.1%}")
+                print(f"    Unanimous ({n_runs}/{n_runs}): "
+                      f"{n_unanimous}/{n_items} ({n_unanimous/n_items:.0%})")
 
     # Summary
     print(f"\n=== SUMMARY ===")
@@ -1151,18 +1276,31 @@ def download_and_parse() -> pd.DataFrame:
     return df
 
 
-def download_and_parse_timecourse(bin_seconds: int = DEFAULT_BIN_SECONDS) -> pd.DataFrame:
+def download_and_parse_timecourse(
+    bin_seconds: int = DEFAULT_BIN_SECONDS,
+    temperature: Optional[float] = None,
+    thinking_level: Optional[str] = None,
+) -> pd.DataFrame:
     """Download and parse timecourse results into a DataFrame."""
-    experiment_name = tc_experiment_name(bin_seconds)
+    import re
+
+    experiment_name = tc_experiment_name(bin_seconds, temperature, thinking_level)
     _, records = _download_raw(experiment_name)
 
-    # Extract group_id and time_bin from custom_id (format: cgtc_{group_id}_t{bin})
+    # Extract group_id, time_bin, and optional run from custom_id
+    # Formats: cgtc_{group_id}_t{bin} or cgtc_{group_id}_t{bin}_r{run}
     for rec in records:
         custom_id = rec.pop("custom_id")
-        # Split from the right to handle group_ids that contain underscores
-        parts = custom_id.rsplit("_t", 1)
-        rec["group_id"] = parts[0].replace("cgtc_", "")
-        rec["time_bin"] = int(parts[1])
+        m = re.match(r"^cgtc_(.+)_t(\d+)_r(\d+)$", custom_id)
+        if m:
+            rec["group_id"] = m.group(1)
+            rec["time_bin"] = int(m.group(2))
+            rec["run"] = int(m.group(3))
+        else:
+            parts = custom_id.rsplit("_t", 1)
+            rec["group_id"] = parts[0].replace("cgtc_", "")
+            rec["time_bin"] = int(parts[1])
+            rec["run"] = 0
         rec["time_seconds"] = (rec["time_bin"] + 1) * bin_seconds
 
     df = pd.DataFrame(records)
@@ -1233,37 +1371,94 @@ def main():
         "--n-runs", type=int, default=1,
         help="Number of duplicate runs per request for reliability analysis (default: 1)",
     )
+    parser.add_argument(
+        "--temperature", type=float, default=None,
+        help="Override MODEL_CONFIG temperature (e.g., 0.0, 0.5). "
+             "Robustness sweeps land in separate experiment names.",
+    )
+    parser.add_argument(
+        "--thinking-level", type=str, default=None,
+        choices=["minimal", "low", "medium", "high"],
+        help="Override MODEL_CONFIG thinking_level. "
+             "Robustness sweeps land in separate experiment names.",
+    )
+    parser.add_argument(
+        "--subset-file", type=str, default=None,
+        help="Path to a text file with one groupId per line; restrict annotation "
+             "to these dyads (for cheap robustness sweeps).",
+    )
     args = parser.parse_args()
+
+    # Load subset of group ids if provided
+    subset_ids = None
+    if args.subset_file:
+        subset_path = Path(args.subset_file)
+        subset_ids = [
+            line.strip() for line in subset_path.read_text().splitlines()
+            if line.strip() and not line.startswith("#")
+        ]
+        print(f"Loaded subset of {len(subset_ids)} group ids from {subset_path}")
 
     if args.mode == "timecourse":
         bin_seconds = args.bin_size
-        experiment_name = tc_experiment_name(bin_seconds)
+        experiment_name = tc_experiment_name(
+            bin_seconds, args.temperature, args.thinking_level
+        )
 
         if args.download:
-            download_and_parse_timecourse(bin_seconds=bin_seconds)
+            download_and_parse_timecourse(
+                bin_seconds=bin_seconds,
+                temperature=args.temperature,
+                thinking_level=args.thinking_level,
+            )
             return
 
         batch_requests = create_timecourse_batch_requests(
-            sample=args.sample, bin_seconds=bin_seconds,
+            sample=args.sample,
+            bin_seconds=bin_seconds,
+            n_runs=args.n_runs,
+            temperature=args.temperature,
+            thinking_level=args.thinking_level,
+            subset_ids=subset_ids,
         )
     elif args.mode == "perbin-timecourse":
         bin_seconds = args.bin_size
-        experiment_name = perbin_tc_experiment_name(bin_seconds)
+        experiment_name = perbin_tc_experiment_name(
+            bin_seconds, args.temperature, args.thinking_level
+        )
 
         if args.download:
-            download_and_parse_perbin_timecourse(bin_seconds=bin_seconds)
+            download_and_parse_perbin_timecourse(
+                bin_seconds=bin_seconds,
+                temperature=args.temperature,
+                thinking_level=args.thinking_level,
+            )
             return
 
         batch_requests = create_perbin_timecourse_batch_requests(
-            sample=args.sample, bin_seconds=bin_seconds, n_runs=args.n_runs,
+            sample=args.sample,
+            bin_seconds=bin_seconds,
+            n_runs=args.n_runs,
+            temperature=args.temperature,
+            thinking_level=args.thinking_level,
+            subset_ids=subset_ids,
         )
     else:
         if args.download:
-            download_and_parse()
+            download_and_parse(
+                temperature=args.temperature,
+                thinking_level=args.thinking_level,
+            )
             return
 
-        batch_requests = create_batch_requests(sample=args.sample)
-        experiment_name = EXPERIMENT_NAME
+        batch_requests = create_batch_requests(
+            sample=args.sample,
+            n_runs=args.n_runs,
+            temperature=args.temperature,
+            thinking_level=args.thinking_level,
+            subset_ids=subset_ids,
+        )
+        experiment_name = full_experiment_name(args.temperature, args.thinking_level)
 
     print(f"Created {len(batch_requests)} batch requests")
 
